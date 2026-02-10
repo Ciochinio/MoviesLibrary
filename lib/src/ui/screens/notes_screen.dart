@@ -218,10 +218,46 @@ class _NotesScreenState extends State<NotesScreen> {
                             final path = p.join(app.paths!.attachmentsDir.path, a.storedRelPath);
                             return Stack(
                               children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Image.file(File(path), width: 180, height: 140, fit: BoxFit.cover),
-                                ),
+GestureDetector(
+  onTap: () {
+    showDialog(
+      context: context,
+      builder: (c) => Dialog(
+        insetPadding: const EdgeInsets.all(12),
+        child: Container(
+          color: Colors.black,
+          constraints: const BoxConstraints(maxWidth: 1200, maxHeight: 900),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 6.0,
+                  child: Center(
+                    child: Image.file(File(path), fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 8,
+                top: 8,
+                child: IconButton(
+                  style: IconButton.styleFrom(backgroundColor: Colors.black.withOpacity(0.5)),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(c),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  },
+  child: ClipRRect(
+    borderRadius: BorderRadius.circular(12),
+    child: Image.file(File(path), width: 180, height: 140, fit: BoxFit.cover),
+  ),
+),
                                 Positioned(
                                   right: 6,
                                   top: 6,

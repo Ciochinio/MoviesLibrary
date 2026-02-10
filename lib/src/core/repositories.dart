@@ -6,6 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:uuid/uuid.dart';
 
 import 'models.dart';
+import 'app_settings.dart';
 
 const _uuid = Uuid();
 
@@ -140,6 +141,26 @@ class ItemRepo {
     return rows.map((r) => _rowToItem(r.cast<String, Object?>())).toList();
   }
 
+
+/// Global tag search across the whole library (all folders).
+/// AND semantics: item must have ALL tagIds.
+Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) async {
+  if (tagIds.isEmpty) return [];
+  final placeholders = List.filled(tagIds.length, '?').join(',');
+  final sql = '''
+    SELECT i.*
+    FROM items i
+    JOIN item_tags it ON it.item_id = i.id
+    WHERE it.tag_id IN ($placeholders)
+    GROUP BY i.id
+    HAVING COUNT(DISTINCT it.tag_id) = ?
+    ORDER BY i.created_at DESC
+  ''';
+  final args = <Object?>[...tagIds, tagIds.length];
+  final rows = await db.rawQuery(sql, args);
+  return rows.map((r) => _rowToItem(r.cast<String, Object?>())).toList();
+}
+
   Future<List<Tag>> listTagsForItem(String itemId) async {
     final rows = await db.rawQuery('''
       SELECT t.* FROM tags t
@@ -208,6 +229,7 @@ class ItemRepo {
     required String targetSubcategoryId,
     required bool forceAddDuplicateAsSeparateFile,
     required String stashSubcategoryId,
+    required ImportMode importMode,
   }) async {
     final bytes = await source.readAsBytes();
     final hash = sha256.convert(bytes).toString();
@@ -228,8 +250,23 @@ class ItemRepo {
     final storedName = '$id$ext';
     final storedRelPath = storedName;
 
-    final dest = File(p.join(filesDir.path, storedRelPath));
+final dest = File(p.join(filesDir.path, storedRelPath));
+
+if (importMode == ImportMode.move) {
+  // Try fast move (same volume). If fails, do copy+delete.
+  try {
+    await source.rename(dest.path);
+  } catch (_) {
     await dest.writeAsBytes(bytes);
+    try {
+      await source.delete();
+    } catch (_) {
+      // Keep the copy if we cannot delete source.
+    }
+  }
+} else {
+  await dest.writeAsBytes(bytes);
+}
 
     final now = DateTime.now();
     final isDup = existing != null;

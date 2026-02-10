@@ -95,6 +95,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     await _reload();
   }
+String _uniquePath(String desiredPath) {
+  if (!File(desiredPath).existsSync()) return desiredPath;
+  final dir = p.dirname(desiredPath);
+  final base = p.basenameWithoutExtension(desiredPath);
+  final ext = p.extension(desiredPath);
+  int i = 1;
+  while (true) {
+    final candidate = p.join(dir, '$base ($i)$ext');
+    if (!File(candidate).existsSync()) return candidate;
+    i++;
+  }
+}
+
+
 
   Future<void> _bulkActions() async {
     final app = context.read<AppState>();
@@ -120,6 +134,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
               leading: const Icon(Icons.drive_file_move),
               title: const Text('Przenieś do subkategorii'),
               onTap: () => Navigator.pop(ctx, 'move'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.download),
+              title: const Text('Eksportuj na dysk'),
+              onTap: () => Navigator.pop(ctx, 'export'),
             ),
             ListTile(
               leading: const Icon(Icons.delete),
@@ -152,6 +171,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await _reload();
       return;
     }
+
+
+if (choice == 'export') {
+  final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+  if (dir == null) return;
+
+  final toExport = loaded.where((i) => app.selectedItemIds.contains(i.id)).toList();
+  int okCount = 0;
+
+  for (final item in toExport) {
+    final src = File(p.join(app.paths!.filesDir.path, item.storedRelPath));
+    if (!await src.exists()) continue;
+
+    final destPath = _uniquePath(p.join(dir, item.originalName));
+    await src.copy(destPath);
+    okCount++;
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Wyeksportowano $okCount plików.')));
+  return;
+}
 
     if (choice == 'delete') {
       final ok = await showDialog<bool>(
@@ -303,25 +343,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
               _TopBar(
                 onImport: _import,
                 onBulk: app.selectedItemIds.isEmpty ? null : _bulkActions,
-                onCreateTag: () async {
-                  final name = await _promptText('Nowy tag');
-                  if (name == null || name.trim().isEmpty) return;
-                  await app.createTag(name.trim());
+                onSearch: () async {
+                  final tags = await _pickTagsForGlobalSearchDialog();
+                  if (tags == null) return;
+                  await app.setGlobalTagSearch(tags);
+                  selectedItem = null;
+                  await _reload();
                 },
-              ),
-              _TagFilterBar(
-                tags: app.tagList,
-                selectedTagIds: app.selectedTagIds,
-                onToggle: (id) {
-                  app.toggleTagFilter(id);
-                  _reload();
-                },
-                onClear: () {
-                  app.clearTagFilters();
-                  _reload();
-                },
-              ),
-              const Divider(height: 1),
+                  onClearSearch: app.globalSearchActive
+      ? () async {
+          app.clearGlobalTagSearch();
+          selectedItem = null;
+          await _reload();
+        }
+      : null,
+),
               Expanded(
                 child: loading
                     ? const Center(child: CircularProgressIndicator())
@@ -349,6 +385,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     final filePath = p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath);
                     await OpenFilex.open(filePath);
                   },
+                  onExport: () async {
+                    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+                    if (dir == null) return;
+                    final src = File(p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath));
+                    if (!await src.exists()) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plik nie istnieje.')));
+                      return;
+                    }
+                    final dest = _uniquePath(p.join(dir, selectedItem!.originalName));
+                    await src.copy(dest);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wyeksportowano plik.')));
+                  },
                   onMove: () async {
                     final subId = await _pickSubcategoryDialog();
                     if (subId == null) return;
@@ -371,7 +419,72 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     }
                     await _reload();
                   },
-                  loadTags: () => app.items!.listTagsForItem(selectedItem!.id),
+                  onDelete: () async {
+  final app = context.read<AppState>();
+  final messenger = ScaffoldMessenger.of(context);
+
+  bool proceed = true;
+  bool dontAskAgain = false;
+
+  if (app.settings.confirmDelete) {
+    proceed = (await showDialog<bool>(
+          context: context,
+          builder: (ctx) {
+            bool localDontAsk = false;
+            return StatefulBuilder(
+              builder: (ctx, setStateSB) => AlertDialog(
+                title: const Text('Usunąć element?'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('To usunie element oraz fizyczny plik z /Library/files.'),
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: localDontAsk,
+                      title: const Text('Nie pytaj więcej'),
+                      onChanged: (v) => setStateSB(() => localDontAsk = v ?? false),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
+                  FilledButton(
+                    onPressed: () {
+                      dontAskAgain = localDontAsk;
+                      Navigator.pop(ctx, true);
+                    },
+                    child: const Text('Usuń'),
+                  ),
+                ],
+              ),
+            );
+          },
+        )) ??
+        false;
+
+    if (dontAskAgain) {
+      await app.setConfirmDelete(false);
+    }
+  }
+
+  if (!proceed) return;
+
+  final existed = File(p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath)).existsSync();
+
+  try {
+    await app.deleteOneItem(selectedItem!);
+    selectedItem = null;
+    await _reload();
+    if (!existed) {
+      messenger.showSnackBar(const SnackBar(content: Text('Plik nie istnieje — usunięto wpis z biblioteki.')));
+    }
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Błąd usuwania: $e')));
+  }
+},
+loadTags: () => app.items!.listTagsForItem(selectedItem!.id),
                 ),
         ),
       ],
@@ -397,6 +510,56 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
     );
   }
+Future<List<String>?> _pickTagsForGlobalSearchDialog() async {
+  final app = context.read<AppState>();
+  final selected = <String>{};
+  selected.addAll(app.globalSearchTagIds);
+
+  return showDialog<List<String>>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setStateSB) => AlertDialog(
+        title: const Text('Szukaj po tagach (globalnie)'),
+        content: SizedBox(
+          width: 420,
+          height: 420,
+          child: ListView(
+            children: [
+              if (app.tagList.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Text('Brak tagów. Dodaj tagi w zakładce "Tagi".'),
+                ),
+              for (final t in app.tagList)
+                CheckboxListTile(
+                  value: selected.contains(t.id),
+                  title: Text(t.name),
+                  onChanged: (v) {
+                    setStateSB(() {
+                      if (v == true) {
+                        selected.add(t.id);
+                      } else {
+                        selected.remove(t.id);
+                      }
+                    });
+                  },
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, selected.toList()),
+            child: const Text('Szukaj'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+
 
   Future<List<String>?> _pickTagsMultiDialog() async {
     final app = context.read<AppState>();
@@ -448,12 +611,19 @@ extension _FirstOrNullExt<T> on Iterable<T> {
 class _TopBar extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback? onBulk;
-  final VoidCallback onCreateTag;
+  final VoidCallback onSearch;
+  final VoidCallback? onClearSearch;
 
-  const _TopBar({required this.onImport, required this.onBulk, required this.onCreateTag});
+  const _TopBar({
+    required this.onImport,
+    required this.onBulk,
+    required this.onSearch,
+    required this.onClearSearch,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Row(
@@ -467,59 +637,31 @@ class _TopBar extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onBulk,
             icon: const Icon(Icons.select_all),
-            label: const Text('Operacje masowe'),
+            label: Text('Operacje masowe (${app.selectedItemIds.length})'),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           OutlinedButton.icon(
-            onPressed: onCreateTag,
-            icon: const Icon(Icons.add),
-            label: const Text('Nowy tag'),
+            onPressed: onSearch,
+            icon: const Icon(Icons.manage_search),
+            label: const Text('Szukaj po tagach'),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TagFilterBar extends StatelessWidget {
-  final List<Tag> tags;
-  final Set<String> selectedTagIds;
-  final void Function(String id) onToggle;
-  final VoidCallback onClear;
-
-  const _TagFilterBar({
-    required this.tags,
-    required this.selectedTagIds,
-    required this.onToggle,
-    required this.onClear,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (tags.isEmpty) return const SizedBox.shrink();
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Row(
-        children: [
-          for (final t in tags)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: FilterChip(
-                label: Text(t.name),
-                selected: selectedTagIds.contains(t.id),
-                onSelected: (_) => onToggle(t.id),
-              ),
+          if (onClearSearch != null) ...[
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: onClearSearch,
+              icon: const Icon(Icons.clear),
+              label: const Text('Wyczyść'),
             ),
-          if (selectedTagIds.isNotEmpty) ...[
-            const SizedBox(width: 12),
-            TextButton.icon(onPressed: onClear, icon: const Icon(Icons.clear), label: const Text('Wyczyść')),
-          ]
+          ],
+          const Spacer(),
+          if (app.globalSearchActive)
+            Chip(label: Text('Wyniki globalne (${app.globalSearchTagIds.length} tagi)')),
         ],
       ),
     );
   }
 }
+
 
 class _ItemsGrid extends StatelessWidget {
   final List<MediaItem> items;
@@ -628,16 +770,20 @@ class _DetailsPanel extends StatelessWidget {
   final MediaItem item;
   final Directory libraryFilesDir;
   final VoidCallback onOpen;
+  final VoidCallback onExport;
   final VoidCallback onMove;
   final VoidCallback onTags;
+  final VoidCallback onDelete;
   final Future<List<Tag>> Function() loadTags;
 
   const _DetailsPanel({
     required this.item,
     required this.libraryFilesDir,
     required this.onOpen,
+    required this.onExport,
     required this.onMove,
     required this.onTags,
+    required this.onDelete,
     required this.loadTags,
   });
 
@@ -672,9 +818,13 @@ class _DetailsPanel extends StatelessWidget {
           const SizedBox(height: 10),
           FilledButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new), label: const Text('Otwórz w systemie')),
           const SizedBox(height: 8),
+          OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download), label: const Text('Eksportuj na dysk')),
+          const SizedBox(height: 8),
           OutlinedButton.icon(onPressed: onMove, icon: const Icon(Icons.drive_file_move), label: const Text('Przenieś')),
           const SizedBox(height: 8),
           OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell), label: const Text('Tagi')),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete), label: const Text('Usuń')),
           const SizedBox(height: 10),
           FutureBuilder<List<Tag>>(
             future: loadTags(),

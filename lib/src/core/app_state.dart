@@ -10,6 +10,7 @@ import 'db.dart';
 import 'models.dart';
 import 'portable_paths.dart';
 import 'repositories.dart';
+import 'app_settings.dart';
 
 class AppState extends ChangeNotifier {
   PortablePaths? paths;
@@ -21,11 +22,18 @@ class AppState extends ChangeNotifier {
   ItemRepo? items;
   NoteRepo? notes;
 
+
+  AppSettings settings = AppSettings.defaults;
+
   // UI state
   String? selectedCategoryId;
   String? selectedSubcategoryId;
   final Set<String> selectedTagIds = {};
   final Set<String> selectedItemIds = {}; // bulk selection
+
+  // Global tag search (across all folders)
+  final Set<String> globalSearchTagIds = {};
+  bool globalSearchActive = false;
 
   // cached
   List<Category> _categoryList = [];
@@ -69,6 +77,9 @@ class AppState extends ChangeNotifier {
 
     // Save selection into settings.json inside library
     await PortablePaths.saveSelectedLibraryPath(paths!.settingsFile, libraryPath);
+
+    settings = await AppSettings.load(paths!.settingsFile);
+    await AppSettings.save(paths!.settingsFile, settings);
 
     _appDb = AppDb(paths!.dbFile.path);
     _db = await _appDb!.open();
@@ -125,11 +136,15 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> selectSubcategory(String categoryId, String subcategoryId) async {
-    selectedCategoryId = categoryId;
-    selectedSubcategoryId = subcategoryId;
-    selectedItemIds.clear();
-    notifyListeners();
-  }
+  // Switching folders exits global search mode.
+  globalSearchTagIds.clear();
+  globalSearchActive = false;
+
+  selectedCategoryId = categoryId;
+  selectedSubcategoryId = subcategoryId;
+  selectedItemIds.clear();
+  notifyListeners();
+}
 
   void toggleTagFilter(String tagId) {
     if (selectedTagIds.contains(tagId)) {
@@ -159,10 +174,31 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+
+Future<void> setGlobalTagSearch(List<String> tagIds) async {
+  globalSearchTagIds
+    ..clear()
+    ..addAll(tagIds);
+  globalSearchActive = globalSearchTagIds.isNotEmpty;
+  selectedItemIds.clear();
+  notifyListeners();
+}
+
+void clearGlobalTagSearch() {
+  globalSearchTagIds.clear();
+  globalSearchActive = false;
+  selectedItemIds.clear();
+  notifyListeners();
+}
+
   Future<List<MediaItem>> loadCurrentItems() async {
-    if (!isReady || selectedSubcategoryId == null) return [];
-    return await items!.listItemsInSubcategory(selectedSubcategoryId!, tagIds: selectedTagIds.toList());
+  if (!isReady) return [];
+  if (globalSearchActive) {
+    return await items!.listItemsByTagsGlobal(tagIds: globalSearchTagIds.toList());
   }
+  if (selectedSubcategoryId == null) return [];
+  return await items!.listItemsInSubcategory(selectedSubcategoryId!, tagIds: const []);
+}
 
   Future<void> createCategory(String name) async {
     await categories!.createCategory(name);
@@ -232,11 +268,12 @@ class AppState extends ChangeNotifier {
     }
 
     final res = await items!.importFile(
-      source: source,
-      targetSubcategoryId: targetSubcategoryId,
-      forceAddDuplicateAsSeparateFile: addDuplicateAsSeparateFile,
-      stashSubcategoryId: stashSubcategoryId!,
-    );
+  source: source,
+  targetSubcategoryId: targetSubcategoryId,
+  forceAddDuplicateAsSeparateFile: addDuplicateAsSeparateFile,
+  stashSubcategoryId: stashSubcategoryId!,
+  importMode: settings.importMode,
+);
     notifyListeners();
     return (inserted: res.item, existingDuplicate: res.duplicateOf);
   }
@@ -272,4 +309,21 @@ class AppState extends ChangeNotifier {
     clearItemSelection();
     notifyListeners();
   }
+
+Future<void> setImportMode(ImportMode mode) async {
+  settings = settings.copyWith(importMode: mode);
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
+Future<void> setConfirmDelete(bool value) async {
+  settings = settings.copyWith(confirmDelete: value);
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
+Future<void> deleteOneItem(MediaItem item) async {
+  await items!.deleteItems([item]);
+  notifyListeners();
+}
 }

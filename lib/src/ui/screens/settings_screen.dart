@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/app_state.dart';
+import '../../core/app_settings.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -17,6 +18,34 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Text('Ustawienia', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 12),
+Card(
+  child: ListTile(
+    title: const Text('Tryb importu'),
+    subtitle: Text(app.settings.importMode == ImportMode.copy
+        ? 'Kopiuj do /Library/files'
+        : 'Przenieś do /Library/files'),
+    trailing: SegmentedButton<ImportMode>(
+      segments: const [
+        ButtonSegment(value: ImportMode.copy, label: Text('Kopiuj')),
+        ButtonSegment(value: ImportMode.move, label: Text('Przenieś')),
+      ],
+      selected: {app.settings.importMode},
+      onSelectionChanged: (s) {
+        context.read<AppState>().setImportMode(s.first);
+      },
+    ),
+  ),
+),
+const SizedBox(height: 12),
+Card(
+  child: SwitchListTile(
+    title: const Text('Pytaj przy usuwaniu'),
+    subtitle: const Text('Jeśli wyłączone, usuwanie będzie bez potwierdzenia.'),
+    value: app.settings.confirmDelete,
+    onChanged: (v) => context.read<AppState>().setConfirmDelete(v),
+  ),
+),
+const SizedBox(height: 12),
           Card(
             child: ListTile(
               title: const Text('Ścieżka biblioteki (Library)'),

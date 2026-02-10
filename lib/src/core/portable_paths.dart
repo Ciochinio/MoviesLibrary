@@ -80,19 +80,33 @@ static Future<String?> tryDetectSiblingLibrary() async {
   return null;
 }
 
-  static Future<void> saveSelectedLibraryPath(File settingsFile, String libraryPath) async {
-    final data = {'libraryPath': libraryPath};
-    await settingsFile.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
-  }
-
-  static Future<String?> loadSelectedLibraryPath(File settingsFile) async {
-    if (!await settingsFile.exists()) return null;
+  
+static Future<void> saveSelectedLibraryPath(File settingsFile, String libraryPath) async {
+  Map<String, Object?> data = {};
+  if (await settingsFile.exists()) {
     try {
       final txt = await settingsFile.readAsString();
       final json = jsonDecode(txt);
+      if (json is Map<String, dynamic>) {
+        data = json.map((k, v) => MapEntry(k, v as Object?));
+      }
+    } catch (_) {}
+  }
+  data['libraryPath'] = libraryPath;
+  await settingsFile.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+}
+
+  
+static Future<String?> loadSelectedLibraryPath(File settingsFile) async {
+  if (!await settingsFile.exists()) return null;
+  try {
+    final txt = await settingsFile.readAsString();
+    final json = jsonDecode(txt);
+    if (json is Map<String, dynamic>) {
       final v = json['libraryPath'];
       if (v is String && v.trim().isNotEmpty) return v;
-    } catch (_) {}
-    return null;
-  }
+    }
+  } catch (_) {}
+  return null;
+}
 }
