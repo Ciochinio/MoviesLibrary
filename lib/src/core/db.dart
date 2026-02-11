@@ -12,6 +12,10 @@ class AppDb {
       dbPath,
       options: OpenDatabaseOptions(
         version: 1,
+        onConfigure: (db) async {
+          // Enforce foreign keys (needed for ON DELETE CASCADE).
+          await db.execute('PRAGMA foreign_keys = ON');
+        },
         onCreate: (db, version) async {
           await _createSchema(db);
         },
@@ -96,5 +100,14 @@ class AppDb {
         FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
       );
     ''');
+
+
+// Indexes for faster browsing & tag search
+await db.execute('CREATE INDEX idx_subcategories_category_id ON subcategories(category_id);');
+await db.execute('CREATE INDEX idx_items_subcategory_id ON items(subcategory_id);');
+await db.execute('CREATE INDEX idx_item_tags_tag_id ON item_tags(tag_id);');
+await db.execute('CREATE INDEX idx_item_tags_item_id ON item_tags(item_id);');
+await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
+
   }
 }

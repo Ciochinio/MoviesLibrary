@@ -28,7 +28,6 @@ class AppState extends ChangeNotifier {
   // UI state
   String? selectedCategoryId;
   String? selectedSubcategoryId;
-  final Set<String> selectedTagIds = {};
   final Set<String> selectedItemIds = {}; // bulk selection
 
   // Global tag search (across all folders)
@@ -146,19 +145,7 @@ class AppState extends ChangeNotifier {
   notifyListeners();
 }
 
-  void toggleTagFilter(String tagId) {
-    if (selectedTagIds.contains(tagId)) {
-      selectedTagIds.remove(tagId);
-    } else {
-      selectedTagIds.add(tagId);
-    }
-    notifyListeners();
-  }
 
-  void clearTagFilters() {
-    selectedTagIds.clear();
-    notifyListeners();
-  }
 
   void toggleItemSelection(String itemId) {
     if (selectedItemIds.contains(itemId)) {
@@ -250,7 +237,11 @@ void clearGlobalTagSearch() {
 
   Future<void> deleteTag(String id) async {
     await tags!.deleteTag(id);
-    selectedTagIds.remove(id);
+    // If the deleted tag is currently used in global search, remove it.
+    globalSearchTagIds.remove(id);
+    if (globalSearchTagIds.isEmpty) {
+      globalSearchActive = false;
+    }
     await refreshAll();
   }
 
@@ -259,29 +250,35 @@ void clearGlobalTagSearch() {
     required String targetSubcategoryId,
     required bool addDuplicateAsSeparateFile,
   }) async {
-    if (!isReady) return (inserted: null, existingDuplicate: null);
 
-    // Pre-check for UI decision; import will re-check too.
-    final existing = await items!.findByHash(await _hashFile(source));
-    if (existing != null && !addDuplicateAsSeparateFile) {
-      return (inserted: null, existingDuplicate: existing);
-    }
+if (!isReady) return (inserted: null, existingDuplicate: null);
 
-    final res = await items!.importFile(
+// Approach A: hash first (streaming), decide on duplicate, then import without re-hashing.
+final hash = await _hashFile(source);
+final existing = await items!.findByHash(hash);
+
+if (existing != null && !addDuplicateAsSeparateFile) {
+  return (inserted: null, existingDuplicate: existing);
+}
+
+final res = await items!.importFile(
   source: source,
   targetSubcategoryId: targetSubcategoryId,
   forceAddDuplicateAsSeparateFile: addDuplicateAsSeparateFile,
   stashSubcategoryId: stashSubcategoryId!,
   importMode: settings.importMode,
+  precomputedSha256: hash,
+  preexistingDuplicate: existing,
 );
-    notifyListeners();
-    return (inserted: res.item, existingDuplicate: res.duplicateOf);
+notifyListeners();
+return (inserted: res.item, existingDuplicate: res.duplicateOf);
   }
 
-  Future<String> _hashFile(File f) async {
-    final bytes = await f.readAsBytes();
-    return sha256.convert(bytes).toString();
-  }
+
+Future<String> _hashFile(File f) async {
+  final digest = await sha256.bind(f.openRead()).first;
+  return digest.toString();
+}
 
   Future<void> moveSelectedItems(String newSubcategoryId) async {
     if (selectedItemIds.isEmpty) return;

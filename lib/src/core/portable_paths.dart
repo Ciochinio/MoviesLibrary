@@ -68,7 +68,7 @@ static Future<String?> tryDetectSiblingLibrary() async {
     if (await winLikeSibling.exists()) return winLikeSibling.path;
 
     // Case 2: macOS .app bundle: go up from Contents/MacOS -> Contents -> .app -> /App folder
-    final macSibling = Directory(p.normalize(p.join(exeDir.path, '..', '..', '..', 'Library')));
+    final macSibling = Directory(p.normalize(p.join(exeDir.path, '..', '..', '..', '..', 'Library')));
     if (await macSibling.exists()) return macSibling.path;
 
     // Fallback: if running from repo, allow ./Library

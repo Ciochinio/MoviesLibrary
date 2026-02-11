@@ -10,6 +10,22 @@ import 'app_settings.dart';
 
 const _uuid = Uuid();
 
+
+Future<String> _sha256HexOfFile(File f) async {
+  final digest = await sha256.bind(f.openRead()).first;
+  return digest.toString();
+}
+
+Future<void> _copyFileStreaming(File source, File dest) async {
+  await dest.parent.create(recursive: true);
+  final sink = dest.openWrite();
+  try {
+    await source.openRead().pipe(sink);
+  } finally {
+    await sink.close();
+  }
+}
+
 ItemType _guessType(String filePath) {
   final ext = p.extension(filePath).toLowerCase();
   if (['.mp4', '.mkv', '.mov', '.avi', '.webm'].contains(ext)) return ItemType.video;
@@ -224,82 +240,85 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
     }
   }
 
-  Future<({MediaItem item, MediaItem? duplicateOf})> importFile({
-    required File source,
-    required String targetSubcategoryId,
-    required bool forceAddDuplicateAsSeparateFile,
-    required String stashSubcategoryId,
-    required ImportMode importMode,
-  }) async {
-    final bytes = await source.readAsBytes();
-    final hash = sha256.convert(bytes).toString();
 
-    final existing = await findByHash(hash);
-    if (existing != null && !forceAddDuplicateAsSeparateFile) {
-      // caller should decide; return existing in duplicateOf slot but do not insert
-      return (item: existing, duplicateOf: existing);
-    }
+Future<({MediaItem item, MediaItem? duplicateOf})> importFile({
+  required File source,
+  required String targetSubcategoryId,
+  required bool forceAddDuplicateAsSeparateFile,
+  required String stashSubcategoryId,
+  required ImportMode importMode,
+  String? precomputedSha256,
+  MediaItem? preexistingDuplicate,
+}) async {
+  final hash = precomputedSha256 ?? await _sha256HexOfFile(source);
 
-    final id = _uuid.v4();
-    final type = _guessType(source.path);
-    final originalName = p.basename(source.path);
-    final sizeBytes = await source.length();
-
-    // stored file name: <uuid><ext>
-    final ext = p.extension(source.path);
-    final storedName = '$id$ext';
-    final storedRelPath = storedName;
-
-final dest = File(p.join(filesDir.path, storedRelPath));
-
-if (importMode == ImportMode.move) {
-  // Try fast move (same volume). If fails, do copy+delete.
-  try {
-    await source.rename(dest.path);
-  } catch (_) {
-    await dest.writeAsBytes(bytes);
-    try {
-      await source.delete();
-    } catch (_) {
-      // Keep the copy if we cannot delete source.
-    }
+  final existing = preexistingDuplicate ?? await findByHash(hash);
+  if (existing != null && !forceAddDuplicateAsSeparateFile) {
+    // caller should decide; return existing in duplicateOf slot but do not insert
+    return (item: existing, duplicateOf: existing);
   }
-} else {
-  await dest.writeAsBytes(bytes);
+
+  final id = _uuid.v4();
+  final type = _guessType(source.path);
+  final originalName = p.basename(source.path);
+  final sizeBytes = await source.length();
+
+  // stored file name: <uuid><ext>
+  final ext = p.extension(source.path);
+  final storedName = '$id$ext';
+  final storedRelPath = storedName;
+
+  final dest = File(p.join(filesDir.path, storedRelPath));
+
+  if (importMode == ImportMode.move) {
+    // Try fast move (same volume). If fails, do copy+delete.
+    try {
+      await source.rename(dest.path);
+    } catch (_) {
+      await _copyFileStreaming(source, dest);
+      try {
+        await source.delete();
+      } catch (_) {
+        // Keep the copy if we cannot delete source.
+      }
+    }
+  } else {
+    await _copyFileStreaming(source, dest);
+  }
+
+  final now = DateTime.now();
+  final isDup = existing != null;
+  final subId = (existing != null) ? stashSubcategoryId : targetSubcategoryId;
+
+  await db.insert('items', {
+    'id': id,
+    'subcategory_id': subId,
+    'type': _itemTypeToDb(type),
+    'original_name': originalName,
+    'stored_rel_path': storedRelPath,
+    'size_bytes': sizeBytes,
+    'sha256': hash,
+    'created_at': now.millisecondsSinceEpoch,
+    'is_duplicate': isDup ? 1 : 0,
+    'duplicate_of_id': existing?.id,
+  });
+
+  final inserted = MediaItem(
+    id: id,
+    subcategoryId: subId,
+    type: type,
+    originalName: originalName,
+    storedRelPath: storedRelPath,
+    sizeBytes: sizeBytes,
+    sha256: hash,
+    createdAt: now,
+    isDuplicate: isDup,
+    duplicateOfId: existing?.id,
+  );
+
+  return (item: inserted, duplicateOf: existing);
 }
 
-    final now = DateTime.now();
-    final isDup = existing != null;
-    final subId = (existing != null) ? stashSubcategoryId : targetSubcategoryId;
-
-    await db.insert('items', {
-      'id': id,
-      'subcategory_id': subId,
-      'type': _itemTypeToDb(type),
-      'original_name': originalName,
-      'stored_rel_path': storedRelPath,
-      'size_bytes': sizeBytes,
-      'sha256': hash,
-      'created_at': now.millisecondsSinceEpoch,
-      'is_duplicate': isDup ? 1 : 0,
-      'duplicate_of_id': existing?.id,
-    });
-
-    final inserted = MediaItem(
-      id: id,
-      subcategoryId: subId,
-      type: type,
-      originalName: originalName,
-      storedRelPath: storedRelPath,
-      sizeBytes: sizeBytes,
-      sha256: hash,
-      createdAt: now,
-      isDuplicate: isDup,
-      duplicateOfId: existing?.id,
-    );
-
-    return (item: inserted, duplicateOf: existing);
-  }
 
   MediaItem _rowToItem(Map<String, Object?> r) {
     return MediaItem(
@@ -355,17 +374,22 @@ class NoteRepo {
     }, where: 'id=?', whereArgs: [note.id]);
   }
 
-  Future<void> deleteNote(String noteId) async {
-    await db.delete('notes', where: 'id=?', whereArgs: [noteId]);
-    // attachments are deleted by FK cascade on rows, but physical files need manual cleanup
-    final rows = await db.query('note_attachments', where: 'note_id=?', whereArgs: [noteId]);
-    for (final r in rows) {
-      final rel = r['stored_rel_path'] as String;
-      final f = File(p.join(attachmentsDir.path, rel));
-      if (await f.exists()) await f.delete();
+
+Future<void> deleteNote(String noteId) async {
+  // Collect attachment paths before deleting note rows (FK cascade would remove them).
+  final rows = await db.query('note_attachments', where: 'note_id=?', whereArgs: [noteId]);
+  final relPaths = rows.map((r) => r['stored_rel_path'] as String).toList();
+
+  await db.delete('notes', where: 'id=?', whereArgs: [noteId]);
+
+  // Physical cleanup after DB deletion.
+  for (final rel in relPaths) {
+    final f = File(p.join(attachmentsDir.path, rel));
+    if (await f.exists()) {
+      await f.delete();
     }
-    await db.delete('note_attachments', where: 'note_id=?', whereArgs: [noteId]);
   }
+}
 
   Future<List<NoteAttachment>> listAttachments(String noteId) async {
     final rows = await db.query('note_attachments', where: 'note_id=?', whereArgs: [noteId]);
