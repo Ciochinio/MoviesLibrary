@@ -245,33 +245,34 @@ void clearGlobalTagSearch() {
     await refreshAll();
   }
 
-  Future<({MediaItem? inserted, MediaItem? existingDuplicate})> importSingleWithDuplicateDecision({
+    Future<({MediaItem? inserted, MediaItem? existingDuplicate, String? sha256})> importSingleWithDuplicateDecision({
     required File source,
     required String targetSubcategoryId,
     required bool addDuplicateAsSeparateFile,
+    String? precomputedSha256,
+    MediaItem? preexistingDuplicate,
   }) async {
+    if (!isReady) return (inserted: null, existingDuplicate: null, sha256: null);
 
-if (!isReady) return (inserted: null, existingDuplicate: null);
+    // Approach A: hash first (streaming), decide on duplicate, then import without re-hashing.
+    final hash = precomputedSha256 ?? await _hashFile(source);
+    final existing = preexistingDuplicate ?? await items!.findByHash(hash);
 
-// Approach A: hash first (streaming), decide on duplicate, then import without re-hashing.
-final hash = await _hashFile(source);
-final existing = await items!.findByHash(hash);
+    if (existing != null && !addDuplicateAsSeparateFile) {
+      return (inserted: null, existingDuplicate: existing, sha256: hash);
+    }
 
-if (existing != null && !addDuplicateAsSeparateFile) {
-  return (inserted: null, existingDuplicate: existing);
-}
-
-final res = await items!.importFile(
-  source: source,
-  targetSubcategoryId: targetSubcategoryId,
-  forceAddDuplicateAsSeparateFile: addDuplicateAsSeparateFile,
-  stashSubcategoryId: stashSubcategoryId!,
-  importMode: settings.importMode,
-  precomputedSha256: hash,
-  preexistingDuplicate: existing,
-);
-notifyListeners();
-return (inserted: res.item, existingDuplicate: res.duplicateOf);
+    final res = await items!.importFile(
+      source: source,
+      targetSubcategoryId: targetSubcategoryId,
+      forceAddDuplicateAsSeparateFile: addDuplicateAsSeparateFile,
+      stashSubcategoryId: stashSubcategoryId!,
+      importMode: settings.importMode,
+      precomputedSha256: hash,
+      preexistingDuplicate: existing,
+    );
+    notifyListeners();
+    return (inserted: res.item, existingDuplicate: res.duplicateOf, sha256: hash);
   }
 
 
@@ -299,13 +300,20 @@ Future<String> _hashFile(File f) async {
     notifyListeners();
   }
 
-  Future<void> deleteSelectedItems(List<MediaItem> loadedItems) async {
-    if (selectedItemIds.isEmpty) return;
+    Future<({List<MediaItem> deleted, List<MediaItem> failed})> deleteSelectedItems(List<MediaItem> loadedItems) async {
+    if (selectedItemIds.isEmpty) return (deleted: <MediaItem>[], failed: <MediaItem>[]);
+
     final toDelete = loadedItems.where((i) => selectedItemIds.contains(i.id)).toList();
-    await items!.deleteItems(toDelete);
-    clearItemSelection();
+    final res = await items!.deleteItems(toDelete);
+
+    // Remove successfully deleted from selection; keep failed selected so user can retry.
+    for (final it in res.deleted) {
+      selectedItemIds.remove(it.id);
+    }
     notifyListeners();
+    return res;
   }
+
 
 Future<void> setImportMode(ImportMode mode) async {
   settings = settings.copyWith(importMode: mode);
@@ -319,8 +327,10 @@ Future<void> setConfirmDelete(bool value) async {
   notifyListeners();
 }
 
-Future<void> deleteOneItem(MediaItem item) async {
-  await items!.deleteItems([item]);
-  notifyListeners();
-}
+  Future<({List<MediaItem> deleted, List<MediaItem> failed})> deleteOneItem(MediaItem item) async {
+    final res = await items!.deleteItems([item]);
+    notifyListeners();
+    return res;
+  }
+
 }

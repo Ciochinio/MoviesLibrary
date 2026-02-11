@@ -26,6 +26,28 @@ Future<void> _copyFileStreaming(File source, File dest) async {
   }
 }
 
+
+Future<void> _copyFileStreamingAtomic(File source, File dest) async {
+  await dest.parent.create(recursive: true);
+  final tmp = File(dest.path + '.part');
+  // Best-effort cleanup if a previous interrupted copy left a temp file.
+  if (await tmp.exists()) {
+    try { await tmp.delete(); } catch (_) {}
+  }
+  final sink = tmp.openWrite();
+  try {
+    await source.openRead().pipe(sink);
+  } catch (e) {
+    // Ensure temp file is not left open/locked.
+    rethrow;
+  } finally {
+    await sink.close();
+  }
+
+  // Rename temp file into place (same directory => practical atomicity).
+  await tmp.rename(dest.path);
+}
+
 ItemType _guessType(String filePath) {
   final ext = p.extension(filePath).toLowerCase();
   if (['.mp4', '.mkv', '.mov', '.avi', '.webm'].contains(ext)) return ItemType.video;
@@ -223,21 +245,38 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
     });
   }
 
-  Future<void> deleteItems(List<MediaItem> items) async {
-    await db.transaction((txn) async {
-      for (final item in items) {
-        await txn.delete('item_tags', where: 'item_id=?', whereArgs: [item.id]);
-        await txn.delete('items', where: 'id=?', whereArgs: [item.id]);
-      }
-    });
+  Future<({List<MediaItem> deleted, List<MediaItem> failed})> deleteItems(List<MediaItem> items) async {
+    final deleted = <MediaItem>[];
+    final failed = <MediaItem>[];
 
-    // Physical delete after DB deletion
+    // 1) Physical delete first (disk is the source of truth).
     for (final item in items) {
       final f = File(p.join(filesDir.path, item.storedRelPath));
-      if (await f.exists()) {
+      if (!await f.exists()) {
+        // Treat missing file as "already deleted" and allow DB cleanup.
+        deleted.add(item);
+        continue;
+      }
+      try {
         await f.delete();
+        deleted.add(item);
+      } catch (_) {
+        // Keep DB record so user can retry later.
+        failed.add(item);
       }
     }
+
+    // 2) DB cleanup only for successfully deleted (or missing) files.
+    if (deleted.isNotEmpty) {
+      await db.transaction((txn) async {
+        for (final item in deleted) {
+          await txn.delete('item_tags', where: 'item_id=?', whereArgs: [item.id]);
+          await txn.delete('items', where: 'id=?', whereArgs: [item.id]);
+        }
+      });
+    }
+
+    return (deleted: deleted, failed: failed);
   }
 
 
@@ -254,7 +293,7 @@ Future<({MediaItem item, MediaItem? duplicateOf})> importFile({
 
   final existing = preexistingDuplicate ?? await findByHash(hash);
   if (existing != null && !forceAddDuplicateAsSeparateFile) {
-    // caller should decide; return existing in duplicateOf slot but do not insert
+    // Caller should decide; return existing in duplicateOf slot but do not insert.
     return (item: existing, duplicateOf: existing);
   }
 
@@ -263,61 +302,100 @@ Future<({MediaItem item, MediaItem? duplicateOf})> importFile({
   final originalName = p.basename(source.path);
   final sizeBytes = await source.length();
 
-  // stored file name: <uuid><ext>
+  // Stored file name: <uuid><ext>
   final ext = p.extension(source.path);
   final storedName = '$id$ext';
   final storedRelPath = storedName;
 
   final dest = File(p.join(filesDir.path, storedRelPath));
 
-  if (importMode == ImportMode.move) {
-    // Try fast move (same volume). If fails, do copy+delete.
+  // Copy/move the file in a crash-resilient way (Approach A: hash first, then decide, then transfer).
+  // - For copy: stream to "<dest>.part" then rename into place.
+  // - For move (same volume): rename to dest; if DB insert fails, best-effort rename back.
+  // - For move (cross-volume): stream copy to "<dest>.part" -> rename; only then delete source.
+  final sourcePathBeforeMove = source.path;
+  var movedByRename = false;
+
+  try {
+    if (importMode == ImportMode.move) {
+      // Try fast move (same volume).
+      try {
+        await source.rename(dest.path);
+        movedByRename = true;
+      } catch (_) {
+        // Cross-volume or blocked: do atomic copy, then (after DB success) delete source.
+        await _copyFileStreamingAtomic(source, dest);
+      }
+    } else {
+      await _copyFileStreamingAtomic(source, dest);
+    }
+
+    final now = DateTime.now();
+    final isDup = existing != null;
+    final subId = (existing != null) ? stashSubcategoryId : targetSubcategoryId;
+
     try {
-      await source.rename(dest.path);
-    } catch (_) {
-      await _copyFileStreaming(source, dest);
+      await db.insert('items', {
+        'id': id,
+        'subcategory_id': subId,
+        'type': _itemTypeToDb(type),
+        'original_name': originalName,
+        'stored_rel_path': storedRelPath,
+        'size_bytes': sizeBytes,
+        'sha256': hash,
+        'created_at': now.millisecondsSinceEpoch,
+        'is_duplicate': isDup ? 1 : 0,
+        'duplicate_of_id': existing?.id,
+      });
+    } catch (e) {
+      // DB failed: rollback file move/copy as safely as possible.
+      if (movedByRename) {
+        try {
+          // Try to return the source back to its original location.
+          await dest.rename(sourcePathBeforeMove);
+        } catch (_) {
+          // If rollback rename fails, best-effort remove the moved file.
+          try { if (await dest.exists()) await dest.delete(); } catch (_) {}
+        }
+      } else {
+        try { if (await dest.exists()) await dest.delete(); } catch (_) {}
+      }
+      rethrow;
+    }
+
+    // If this was a cross-volume "move", only now delete the source.
+    if (importMode == ImportMode.move && !movedByRename) {
       try {
         await source.delete();
       } catch (_) {
-        // Keep the copy if we cannot delete source.
+        // Keep the imported copy if we cannot delete the source.
       }
     }
-  } else {
-    await _copyFileStreaming(source, dest);
+
+    final inserted = MediaItem(
+      id: id,
+      subcategoryId: subId,
+      type: type,
+      originalName: originalName,
+      storedRelPath: storedRelPath,
+      sizeBytes: sizeBytes,
+      sha256: hash,
+      createdAt: now,
+      isDuplicate: isDup,
+      duplicateOfId: existing?.id,
+    );
+
+    return (item: inserted, duplicateOf: existing);
+  } catch (e) {
+    // If the copy/move failed mid-way, best-effort cleanup any leftover temp file.
+    final tmp = File(dest.path + '.part');
+    if (await tmp.exists()) {
+      try { await tmp.delete(); } catch (_) {}
+    }
+    rethrow;
   }
-
-  final now = DateTime.now();
-  final isDup = existing != null;
-  final subId = (existing != null) ? stashSubcategoryId : targetSubcategoryId;
-
-  await db.insert('items', {
-    'id': id,
-    'subcategory_id': subId,
-    'type': _itemTypeToDb(type),
-    'original_name': originalName,
-    'stored_rel_path': storedRelPath,
-    'size_bytes': sizeBytes,
-    'sha256': hash,
-    'created_at': now.millisecondsSinceEpoch,
-    'is_duplicate': isDup ? 1 : 0,
-    'duplicate_of_id': existing?.id,
-  });
-
-  final inserted = MediaItem(
-    id: id,
-    subcategoryId: subId,
-    type: type,
-    originalName: originalName,
-    storedRelPath: storedRelPath,
-    sizeBytes: sizeBytes,
-    sha256: hash,
-    createdAt: now,
-    isDuplicate: isDup,
-    duplicateOfId: existing?.id,
-  );
-
-  return (item: inserted, duplicateOf: existing);
 }
+
 
 
   MediaItem _rowToItem(Map<String, Object?> r) {

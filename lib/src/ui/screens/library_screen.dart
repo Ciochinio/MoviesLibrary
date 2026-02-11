@@ -83,6 +83,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             source: file,
             targetSubcategoryId: target,
             addDuplicateAsSeparateFile: true,
+            precomputedSha256: pre.sha256,
+            preexistingDuplicate: pre.existingDuplicate,
           );
         }
       } else {
@@ -206,8 +208,19 @@ if (choice == 'export') {
         ),
       );
       if (ok == true) {
-        await app.deleteSelectedItems(loaded);
+        final res = await app.deleteSelectedItems(loaded);
         await _reload();
+        if (res.failed.isNotEmpty) {
+          final names = res.failed.map((e) => e.originalName).take(3).join(', ');
+          final more = res.failed.length > 3 ? ' (+${res.failed.length - 3})' : '';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Nie udało się usunąć ${res.failed.length} plików: $names$more')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Usunięto ${res.deleted.length} elementów.')),
+          );
+        }
       }
     }
   }
@@ -474,11 +487,17 @@ if (choice == 'export') {
   final existed = File(p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath)).existsSync();
 
   try {
-    await app.deleteOneItem(selectedItem!);
+    final res = await app.deleteOneItem(selectedItem!);
+    if (res.failed.isNotEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku (może być używany przez inny program).')));
+      return;
+    }
     selectedItem = null;
     await _reload();
     if (!existed) {
       messenger.showSnackBar(const SnackBar(content: Text('Plik nie istnieje — usunięto wpis z biblioteki.')));
+    } else {
+      messenger.showSnackBar(const SnackBar(content: Text('Usunięto element.')));
     }
   } catch (e) {
     messenger.showSnackBar(SnackBar(content: Text('Błąd usuwania: $e')));
