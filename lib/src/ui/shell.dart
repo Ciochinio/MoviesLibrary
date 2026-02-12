@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
 import 'screens/library_screen.dart';
+import 'screens/search_screen.dart';
 import 'screens/notes_screen.dart';
 import 'screens/tags_screen.dart';
 import 'screens/categories_screen.dart';
@@ -48,6 +49,7 @@ class _AppShellState extends State<AppShell> {
 
     final pages = [
       const LibraryScreen(),
+      const SearchScreen(),
       const NotesScreen(),
       const TagsScreen(),
       const CategoriesScreen(),
@@ -65,6 +67,7 @@ class _AppShellState extends State<AppShell> {
             onDestinationSelected: (v) => setState(() => index = v),
             destinations: const [
               NavigationRailDestination(icon: Icon(Icons.video_library), label: Text('Biblioteka')),
+              NavigationRailDestination(icon: Icon(Icons.search), label: Text('Szukaj')),
               NavigationRailDestination(icon: Icon(Icons.note_alt), label: Text('Notatki')),
               NavigationRailDestination(icon: Icon(Icons.sell), label: Text('Tagi')),
               NavigationRailDestination(icon: Icon(Icons.folder), label: Text('Kategorie')),

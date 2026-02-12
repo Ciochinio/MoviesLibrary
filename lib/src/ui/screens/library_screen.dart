@@ -8,6 +8,9 @@ import 'package:provider/provider.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../core/library_folders.dart';
+
+import '../widgets/tag_manager_dialog.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -37,6 +40,92 @@ class _LibraryScreenState extends State<LibraryScreen> {
       selectedItem = loaded.where((e) => e.id == selectedItem!.id).cast<MediaItem?>().firstOrNull;
     }
     setState(() => loading = false);
+  }
+
+  Future<void> _refreshFromDisk() async {
+    final app = context.read<AppState>();
+    if (!app.isReady) return;
+
+    await _runWithProgress(
+      title: 'Odświeżanie biblioteki…',
+      task: () async {
+        await app.refreshFromDiskAndMigrate();
+      },
+    );
+
+    await _reload();
+  }
+
+  Future<void> _exportFolder() async {
+    final app = context.read<AppState>();
+    if (!app.isReady || app.selectedCategoryId == null) return;
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.folder),
+              title: const Text('Eksportuj aktualną subkategorię'),
+              onTap: () => Navigator.pop(ctx, 'sub'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_copy),
+              title: const Text('Eksportuj całą kategorię'),
+              onTap: () => Navigator.pop(ctx, 'cat'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+
+    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+    if (dir == null) return;
+
+    int count = 0;
+    await _runWithProgress(
+      title: 'Eksportowanie…',
+      task: () async {
+        if (choice == 'cat') {
+          count = await app.exportCategoryToFolder(categoryId: app.selectedCategoryId!, destRoot: dir);
+        } else {
+          count = await app.exportCurrentSubcategoryToFolder(dir);
+        }
+      },
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Wyeksportowano $count plików.')));
+  }
+
+  Future<void> _runWithProgress({
+    required String title,
+    required Future<void> Function() task,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        Future.microtask(() async {
+          try {
+            await task();
+          } finally {
+            if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+          }
+        });
+
+        return AlertDialog(
+          title: Text(title),
+          content: const SizedBox(
+            height: 70,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _import() async {
@@ -183,7 +272,7 @@ if (choice == 'export') {
   int okCount = 0;
 
   for (final item in toExport) {
-    final src = File(p.join(app.paths!.filesDir.path, item.storedRelPath));
+    final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
     if (!await src.exists()) continue;
 
     final destPath = _uniquePath(p.join(dir, item.originalName));
@@ -306,7 +395,7 @@ if (choice == 'export') {
                     ),
                     IconButton(
                       tooltip: 'Odśwież',
-                      onPressed: () async => _reload(),
+                      onPressed: () async => _refreshFromDisk(),
                       icon: const Icon(Icons.refresh),
                     ),
                   ],
@@ -356,20 +445,7 @@ if (choice == 'export') {
               _TopBar(
                 onImport: _import,
                 onBulk: app.selectedItemIds.isEmpty ? null : _bulkActions,
-                onSearch: () async {
-                  final tags = await _pickTagsForGlobalSearchDialog();
-                  if (tags == null) return;
-                  await app.setGlobalTagSearch(tags);
-                  selectedItem = null;
-                  await _reload();
-                },
-                  onClearSearch: app.globalSearchActive
-      ? () async {
-          app.clearGlobalTagSearch();
-          selectedItem = null;
-          await _reload();
-        }
-      : null,
+                onExportFolder: app.selectedSubcategoryId == null ? null : _exportFolder,
 ),
               Expanded(
                 child: loading
@@ -395,13 +471,13 @@ if (choice == 'export') {
                   item: selectedItem!,
                   libraryFilesDir: app.paths!.filesDir,
                   onOpen: () async {
-                    final filePath = p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath);
+                    final filePath = LibraryFolders.absPath(app.paths!.filesDir, selectedItem!.storedRelPath);
                     await OpenFilex.open(filePath);
                   },
                   onExport: () async {
                     final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
                     if (dir == null) return;
-                    final src = File(p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath));
+                    final src = File(LibraryFolders.absPath(app.paths!.filesDir, selectedItem!.storedRelPath));
                     if (!await src.exists()) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plik nie istnieje.')));
                       return;
@@ -413,23 +489,25 @@ if (choice == 'export') {
                   onMove: () async {
                     final subId = await _pickSubcategoryDialog();
                     if (subId == null) return;
-                    await app.items!.setItemSubcategory(selectedItem!.id, subId);
+                    final list = await app.items!.listItemsByIds([selectedItem!.id]);
+                    await app.items!.moveItemsToSubcategory(list, subId);
+                    await app.refreshFromDiskAndMigrate();
                     await _reload();
                   },
                   onTags: () async {
-                    final chosen = await _pickTagsMultiDialog();
-                    if (chosen == null) return;
-                    // set difference updates
-                    final current = await app.items!.listTagsForItem(selectedItem!.id);
-                    final currentIds = current.map((e) => e.id).toSet();
-                    final newIds = chosen.toSet();
-
-                    for (final add in newIds.difference(currentIds)) {
-                      await app.items!.addTagToItem(selectedItem!.id, add);
-                    }
-                    for (final rem in currentIds.difference(newIds)) {
-                      await app.items!.removeTagFromItem(selectedItem!.id, rem);
-                    }
+                    final curSimple = await app.items!.listTagIdsForItem(selectedItem!.id);
+                    final curKv = await app.items!.listKeyValueIdsForItem(selectedItem!.id);
+                    final picked = await showTagManagerDialog(
+                      context,
+                      initialSimpleTagIds: curSimple,
+                      initialKeyValueIds: curKv,
+                    );
+                    if (picked == null) return;
+                    await app.setTagsForItem(
+                      itemId: selectedItem!.id,
+                      simpleTagIds: picked.simpleTagIds,
+                      keyValueIds: picked.keyValueIds,
+                    );
                     await _reload();
                   },
                   onDelete: () async {
@@ -484,7 +562,7 @@ if (choice == 'export') {
 
   if (!proceed) return;
 
-  final existed = File(p.join(app.paths!.filesDir.path, selectedItem!.storedRelPath)).existsSync();
+  final existed = File(LibraryFolders.absPath(app.paths!.filesDir, selectedItem!.storedRelPath)).existsSync();
 
   try {
     final res = await app.deleteOneItem(selectedItem!);
@@ -504,6 +582,7 @@ if (choice == 'export') {
   }
 },
 loadTags: () => app.items!.listTagsForItem(selectedItem!.id),
+                  loadKeyValues: () => app.items!.listKeyValuesForItem(selectedItem!.id),
                 ),
         ),
       ],
@@ -630,14 +709,12 @@ extension _FirstOrNullExt<T> on Iterable<T> {
 class _TopBar extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback? onBulk;
-  final VoidCallback onSearch;
-  final VoidCallback? onClearSearch;
+  final VoidCallback? onExportFolder;
 
   const _TopBar({
     required this.onImport,
     required this.onBulk,
-    required this.onSearch,
-    required this.onClearSearch,
+    required this.onExportFolder,
   });
 
   @override
@@ -660,21 +737,11 @@ class _TopBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
-            onPressed: onSearch,
-            icon: const Icon(Icons.manage_search),
-            label: const Text('Szukaj po tagach'),
+            onPressed: app.globalSearchActive ? null : onExportFolder,
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Eksportuj folder'),
           ),
-          if (onClearSearch != null) ...[
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed: onClearSearch,
-              icon: const Icon(Icons.clear),
-              label: const Text('Wyczyść'),
-            ),
-          ],
           const Spacer(),
-          if (app.globalSearchActive)
-            Chip(label: Text('Wyniki globalne (${app.globalSearchTagIds.length} tagi)')),
         ],
       ),
     );
@@ -714,7 +781,7 @@ class _ItemsGrid extends StatelessWidget {
       itemCount: items.length,
       itemBuilder: (ctx, i) {
         final it = items[i];
-        final filePath = p.join(libraryFilesDir.path, it.storedRelPath);
+        final filePath = LibraryFolders.absPath(libraryFilesDir, it.storedRelPath);
         final isSelected = it.id == selectedItemId;
         final isBulk = selectedIds.contains(it.id);
 
@@ -794,6 +861,7 @@ class _DetailsPanel extends StatelessWidget {
   final VoidCallback onTags;
   final VoidCallback onDelete;
   final Future<List<Tag>> Function() loadTags;
+  final Future<List<TagKeyValue>> Function() loadKeyValues;
 
   const _DetailsPanel({
     required this.item,
@@ -804,11 +872,12 @@ class _DetailsPanel extends StatelessWidget {
     required this.onTags,
     required this.onDelete,
     required this.loadTags,
+    required this.loadKeyValues,
   });
 
   @override
   Widget build(BuildContext context) {
-    final filePath = p.join(libraryFilesDir.path, item.storedRelPath);
+    final filePath = LibraryFolders.absPath(libraryFilesDir, item.storedRelPath);
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -855,6 +924,21 @@ class _DetailsPanel extends StatelessWidget {
                 runSpacing: 6,
                 children: [
                   for (final t in tags) Chip(label: Text(t.name)),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 6),
+          FutureBuilder<List<TagKeyValue>>(
+            future: loadKeyValues(),
+            builder: (ctx, snap) {
+              final kv = snap.data ?? const <TagKeyValue>[];
+              if (kv.isEmpty) return const SizedBox.shrink();
+              return Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final v in kv) Chip(label: Text(formatKeyValueChip(v))),
                 ],
               );
             },

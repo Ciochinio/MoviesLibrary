@@ -45,6 +45,28 @@ class Tag {
   Tag({required this.id, required this.name});
 }
 
+class TagKey {
+  final String id;
+  final String key;
+  final DateTime createdAt;
+  TagKey({required this.id, required this.key, required this.createdAt});
+}
+
+class TagKeyValue {
+  final String id;
+  final String keyId;
+  final String key;
+  final String value;
+  final DateTime createdAt;
+  TagKeyValue({
+    required this.id,
+    required this.keyId,
+    required this.key,
+    required this.value,
+    required this.createdAt,
+  });
+}
+
 class Note {
   final String id;
   final String title;

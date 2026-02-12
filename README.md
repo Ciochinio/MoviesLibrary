@@ -1,16 +1,58 @@
-# movieslibrary
+# Portable Media Library (Flutter) — V1.3 Desktop
 
-A new Flutter project.
+Aplikacja Flutter (Windows + macOS) — **desktop-only** (bez iOS/Android) zgodna ze specyfikacją z rozmowy:
+- tryb portable: **/App** + **/Library** na jednym nośniku
+- import (kopiowanie do /Library/files)
+- 2-poziomowe kategorie (poziom 2 obowiązkowy) + **Stash**
+- jeden element w dokładnie jednej subkategorii
+- tagi globalne (tekstowe), filtrowanie AND
+- duplikaty: pytanie (dodaj jako osobny plik do Stash / nie dodawaj)
+- notatki + załączniki obrazów (kopiowane do /Library/attachments)
+- masowe operacje: tagi, przenoszenie, usuwanie
 
-## Getting Started
+> Uwaga: w V1 podgląd wideo jest przez **Otwórz w systemie** (open_filex).
+> Podgląd obrazów jest wbudowany. (Wideo player można dodać później jako V1.1)
 
-This project is a starting point for a Flutter application.
+## Zakres platform
+- Wspierane: **Windows, macOS**
+- Niewspierane: iOS/Android (dostęp mobilny przez MEGA/itp.)
 
-A few resources to get you started if this is your first Flutter project:
+## Wymagania
+- Flutter SDK (stable)
+- Windows: Visual Studio (Desktop development with C++)
+- macOS: Xcode
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Uruchomienie (dev)
+```bash
+flutter pub get
+flutter run -d windows
+# albo
+flutter run -d macos
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Tryb portable
+Aplikacja przy starcie próbuje znaleźć folder `Library` obok uruchamialnego pliku:
+- jeśli istnieje: używa go jako biblioteki
+- jeśli nie: poprosi o wybranie/utworzenie biblioteki
+
+Zalecany układ na pendrive:
+- /App  -> build aplikacji
+- /Library -> dane (db, files, thumbs, attachments)
+
+## Build (release)
+```bash
+flutter build windows --release
+flutter build macos --release
+```
+
+Skopiuj wynik do `/App` na nośniku oraz utwórz `/Library`.
+
+## Struktura /Library
+- db/library.sqlite
+- files/...
+- thumbs/...
+- attachments/...
+- settings.json (zapisywany automatycznie)
+
+## Licencja
+Do własnego użytku / prototypu.
