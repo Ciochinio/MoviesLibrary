@@ -441,12 +441,14 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
   /// Global search with AND semantics across:
   /// - simpleTagIds (tags)
   /// - keyValueIds (tag_key_values)
+  /// - filename (partial match, case-insensitive)
   Future<List<MediaItem>> searchItemsGlobal({
     required List<String> simpleTagIds,
     required List<String> keyValueIds,
+    String? filename,
   }) async {
-    // If no filters, return empty to avoid accidental "dump all".
-    if (simpleTagIds.isEmpty && keyValueIds.isEmpty) return [];
+    // If no filters at all, return empty to avoid accidental "dump all".
+    if (simpleTagIds.isEmpty && keyValueIds.isEmpty && (filename == null || filename.trim().isEmpty)) return [];
 
     // Start with all items.
     // We'll filter by joining required mapping tables and HAVING counts.
@@ -467,6 +469,12 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
       joinSql += ' JOIN item_tag_key_values itk ON itk.item_id = i.id';
       whereParts.add('itk.key_value_id IN ($p2)');
       args.addAll(keyValueIds);
+    }
+
+    // Filename filtering (partial match, case-insensitive)
+    if (filename != null && filename.trim().isNotEmpty) {
+      whereParts.add('i.original_name LIKE ?');
+      args.add('%${filename.trim()}%');
     }
 
     final whereSql = whereParts.isEmpty ? '' : ('WHERE ' + whereParts.join(' AND '));
@@ -599,6 +607,34 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
         await txn.delete('item_tags', where: 'item_id=? AND tag_id=?', whereArgs: [id, tagId]);
       }
     });
+  }
+
+  /// Bulk add tags to all items in a subcategory
+  Future<int> bulkAddTagToSubcategory(String subcategoryId, String tagId) async {
+    final items = await listItemsInSubcategory(subcategoryId);
+    if (items.isEmpty) return 0;
+    
+    await db.transaction((txn) async {
+      for (final item in items) {
+        await txn.insert('item_tags', {'item_id': item.id, 'tag_id': tagId}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
+    
+    return items.length;
+  }
+
+  /// Bulk add key-value tags to all items in a subcategory
+  Future<int> bulkAddKeyValueToSubcategory(String subcategoryId, String keyValueId) async {
+    final items = await listItemsInSubcategory(subcategoryId);
+    if (items.isEmpty) return 0;
+    
+    await db.transaction((txn) async {
+      for (final item in items) {
+        await txn.insert('item_tag_key_values', {'item_id': item.id, 'key_value_id': keyValueId}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
+    
+    return items.length;
   }
 
   Future<void> bulkMove(List<String> itemIds, String newSubcategoryId) async {

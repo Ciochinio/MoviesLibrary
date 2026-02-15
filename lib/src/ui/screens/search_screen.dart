@@ -10,6 +10,7 @@ import '../../core/app_state.dart';
 import '../../core/library_folders.dart';
 import '../../core/models.dart';
 import '../widgets/tag_manager_dialog.dart';
+import '../widgets/tag_filter_panel.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -21,10 +22,18 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final Set<String> _simpleSelected = {};
   final Set<String> _kvSelected = {};
+  final TextEditingController _filenameController = TextEditingController();
 
   bool _loading = false;
+  bool _showFilterPanel = false;
   List<MediaItem> _results = const [];
   MediaItem? _selected;
+
+  @override
+  void dispose() {
+    _filenameController.dispose();
+    super.dispose();
+  }
 
   Future<void> _runSearch() async {
     final app = context.read<AppState>();
@@ -39,6 +48,7 @@ class _SearchScreenState extends State<SearchScreen> {
       final res = await app.items!.searchItemsGlobal(
         simpleTagIds: _simpleSelected.toList(),
         keyValueIds: _kvSelected.toList(),
+        filename: _filenameController.text.trim().isNotEmpty ? _filenameController.text.trim() : null,
       );
       if (!mounted) return;
       setState(() {
@@ -55,6 +65,7 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _simpleSelected.clear();
       _kvSelected.clear();
+      _filenameController.clear();
       _results = const [];
       _selected = null;
     });
@@ -113,242 +124,271 @@ class _SearchScreenState extends State<SearchScreen> {
 
     return Row(
       children: [
-        SizedBox(
-          width: 320,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
+        // Main content area
+        Expanded(
+          child: Column(
+            children: [
+              // Search bar
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
                   children: [
-                    Text('Szukaj', style: Theme.of(context).textTheme.titleMedium),
-                    const Spacer(),
-                    FilledButton.icon(
-                      onPressed: (_simpleSelected.isEmpty && _kvSelected.isEmpty) ? null : _runSearch,
-                      icon: const Icon(Icons.search),
-                      label: const Text('Szukaj'),
+                    Expanded(
+                      child: TextField(
+                        controller: _filenameController,
+                        decoration: InputDecoration(
+                          hintText: 'Search by filename...',
+                          prefixIcon: const Icon(Icons.search),
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          suffixIcon: _filenameController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _filenameController.clear();
+                                    });
+                                  },
+                                )
+                              : null,
+                        ),
+                        onChanged: (value) => setState(() {}),
+                        onSubmitted: (value) => _runSearch(),
+                      ),
                     ),
                     const SizedBox(width: 8),
                     OutlinedButton.icon(
-                      onPressed: (_simpleSelected.isEmpty && _kvSelected.isEmpty && _results.isEmpty) ? null : _clearFilters,
+                      onPressed: () {
+                        setState(() {
+                          _showFilterPanel = !_showFilterPanel;
+                        });
+                      },
+                      icon: Icon(_showFilterPanel ? Icons.filter_alt : Icons.filter_alt_outlined),
+                      label: Text(_showFilterPanel ? 'Hide Filters' : 'Filters'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: (_simpleSelected.isEmpty && _kvSelected.isEmpty && _filenameController.text.trim().isEmpty)
+                          ? null
+                          : _runSearch,
+                      icon: const Icon(Icons.search),
+                      label: const Text('Search'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: (_simpleSelected.isEmpty && _kvSelected.isEmpty && _results.isEmpty && _filenameController.text.isEmpty)
+                          ? null
+                          : _clearFilters,
                       icon: const Icon(Icons.clear),
-                      label: const Text('Wyczyść'),
+                      label: const Text('Clear'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: ListView(
+              ),
+
+              // Active filters display
+              if (_simpleSelected.isNotEmpty || _kvSelected.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Row(
                     children: [
-                      Text('Tagi', style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      if (app.tagList.isEmpty)
-                        const Text('Brak tagów. Dodaj je w zakładce „Tagi”.')
-                      else
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final t in app.tagList)
-                              FilterChip(
-                                label: Text(t.name),
-                                selected: _simpleSelected.contains(t.id),
-                                onSelected: (v) => setState(() {
-                                  if (v) {
-                                    _simpleSelected.add(t.id);
-                                  } else {
-                                    _simpleSelected.remove(t.id);
-                                  }
-                                }),
-                              ),
-                          ],
+                      const Icon(Icons.filter_alt, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Active filters: ${_simpleSelected.length} tags, ${_kvSelected.length} custom tags',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
-                      const SizedBox(height: 14),
-                      const Divider(height: 1),
-                      const SizedBox(height: 14),
-                      Text('Key:Value', style: Theme.of(context).textTheme.titleSmall),
-                      const SizedBox(height: 6),
-                      if (app.tagKeyList.isEmpty)
-                        const Text('Brak kluczy. Dodaj je w zakładce „Tagi” → „Key:Value”.')
-                      else
-                        ...app.tagKeyList.map((k) {
-                          final values = app.valuesForKey(k.id);
-                          return ExpansionTile(
-                            title: Text(k.key),
-                            children: [
-                              if (values.isEmpty)
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  child: Text('Brak wartości.'),
-                                ),
-                              for (final v in values)
-                                CheckboxListTile(
-                                  value: _kvSelected.contains(v.id),
-                                  title: Text(v.value),
-                                  onChanged: (checked) => setState(() {
-                                    if (checked == true) {
-                                      _kvSelected.add(v.id);
-                                    } else {
-                                      _kvSelected.remove(v.id);
-                                    }
-                                  }),
-                                ),
-                            ],
-                          );
-                        }),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Zaznaczone: ${_simpleSelected.length} tagów, ${_kvSelected.length} key:value',
-                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(8),
+
+              const Divider(height: 1),
+
+              // Results
+              Expanded(
                 child: Row(
                   children: [
-                    Text('Wyniki', style: Theme.of(context).textTheme.titleMedium),
-                    const Spacer(),
-                    if (_loading) const Padding(padding: EdgeInsets.only(right: 12), child: CircularProgressIndicator()),
-                    if (!_loading) Text('${_results.length}'),
+                    Expanded(
+                      flex: 2,
+                      child: _loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _ItemsGrid(
+                              items: _results,
+                              libraryFilesDir: app.paths!.filesDir,
+                              selectedItemId: _selected?.id,
+                              onSelect: (item) => setState(() => _selected = item),
+                            ),
+                    ),
+                    if (_selected != null) ...[
+                      const VerticalDivider(width: 1),
+                      SizedBox(
+                        width: 340,
+                        child: _DetailsPanel(
+                          item: _selected!,
+                          libraryFilesDir: app.paths!.filesDir,
+                          onOpen: () async {
+                            final abs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
+                            await OpenFilex.open(abs);
+                          },
+                          onExport: () async {
+                            final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+                            if (dir == null) return;
+
+                            final srcAbs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
+                            final destPath = _uniquePath(p.join(dir, _selected!.originalName));
+                            await File(srcAbs).copy(destPath);
+
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wyeksportowano.')));
+                          },
+                          onMove: () async {
+                            final targetSubId = await _pickSubcategoryDialog();
+                            if (targetSubId == null) return;
+
+                            await app.items!.moveItemsToSubcategory([_selected!], targetSubId);
+
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Przeniesiono.')));
+                            await _runSearch();
+                          },
+                          onTags: () async {
+                            final app = context.read<AppState>();
+                            final currentSimple = await app.items!.listTagIdsForItem(_selected!.id);
+                            final currentKV = await app.items!.listKeyValueIdsForItem(_selected!.id);
+                            
+                            final picked = await showTagManagerDialog(
+                              context,
+                              initialSimpleTagIds: currentSimple,
+                              initialKeyValueIds: currentKV,
+                            );
+                            
+                            if (picked != null) {
+                              final toAdd = picked.simpleTagIds.difference(currentSimple);
+                              final toRemove = currentSimple.difference(picked.simpleTagIds);
+                              for (final id in toAdd) {
+                                await app.items!.addTagToItem(_selected!.id, id);
+                              }
+                              for (final id in toRemove) {
+                                await app.items!.removeTagFromItem(_selected!.id, id);
+                              }
+                              
+                              final kvToAdd = picked.keyValueIds.difference(currentKV);
+                              final kvToRemove = currentKV.difference(picked.keyValueIds);
+                              for (final id in kvToAdd) {
+                                await app.items!.addKeyValueToItem(_selected!.id, id);
+                              }
+                              for (final id in kvToRemove) {
+                                await app.items!.removeKeyValueFromItem(_selected!.id, id);
+                              }
+                              
+                              await app.items!.writeSidecarForItemId(_selected!.id);
+                            }
+                            
+                            setState(() {});
+                          },
+                          onDelete: () async {
+                            final messenger = ScaffoldMessenger.of(context);
+
+                            bool proceed = true;
+                            bool dontAskAgain = false;
+
+                            if (app.settings.confirmDelete) {
+                              final result = await showDialog<({bool confirm, bool dontAsk})>(
+                                context: context,
+                                builder: (ctx) {
+                                  bool dontAsk = false;
+                                  return StatefulBuilder(
+                                    builder: (ctx, setStateDialog) => AlertDialog(
+                                      title: const Text('Potwierdzenie'),
+                                      content: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Czy na pewno usunąć:\n${_selected!.originalName}?'),
+                                          const SizedBox(height: 16),
+                                          CheckboxListTile(
+                                            value: dontAsk,
+                                            title: const Text('Nie pytaj więcej'),
+                                            dense: true,
+                                            contentPadding: EdgeInsets.zero,
+                                            onChanged: (v) => setStateDialog(() => dontAsk = v ?? false),
+                                          ),
+                                        ],
+                                      ),
+                                      actions: [
+                                        TextButton(onPressed: () => Navigator.pop(ctx, (confirm: false, dontAsk: false)), child: const Text('Anuluj')),
+                                        FilledButton(onPressed: () => Navigator.pop(ctx, (confirm: true, dontAsk: dontAsk)), child: const Text('Usuń')),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              );
+
+                              proceed = result?.confirm ?? false;
+                              dontAskAgain = result?.dontAsk ?? false;
+                            }
+
+                            if (!proceed) return;
+
+                            if (dontAskAgain) {
+                              await app.setConfirmDelete(false);
+                              messenger.showSnackBar(const SnackBar(content: Text('Wyłączono potwierdzanie usuwania.')));
+                            }
+
+                            final res = await app.deleteOneItem(_selected!);
+                            if (res.deleted.isNotEmpty) {
+                              messenger.showSnackBar(const SnackBar(content: Text('Usunięto.')));
+                              setState(() => _selected = null);
+                              await _runSearch();
+                            } else {
+                              messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku (np. brak uprawnień).')));
+                            }
+                          },
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _ItemsGrid(
-                        items: _results,
-                        libraryFilesDir: app.paths!.filesDir,
-                        selectedItemId: _selected?.id,
-                        onSelect: (it) => setState(() => _selected = it),
-                      ),
               ),
             ],
           ),
         ),
-        const VerticalDivider(width: 1),
-        SizedBox(
-          width: 360,
-          child: _selected == null
-              ? const Center(child: Text('Wybierz element'))
-              : _DetailsPanel(
-                  item: _selected!,
-                  libraryFilesDir: app.paths!.filesDir,
-                  onOpen: () async {
-                    final filePath = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
-                    await OpenFilex.open(filePath);
-                  },
-                  onExport: () async {
-                    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
-                    if (dir == null) return;
-                    final src = File(LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath));
-                    if (!await src.exists()) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plik nie istnieje.')));
-                      return;
-                    }
-                    final dest = _uniquePath(p.join(dir, _selected!.originalName));
-                    await src.copy(dest);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wyeksportowano plik.')));
-                  },
-                  onMove: () async {
-                    final subId = await _pickSubcategoryDialog();
-                    if (subId == null) return;
-                    final list = await app.items!.listItemsByIds([_selected!.id]);
-                    await app.items!.moveItemsToSubcategory(list, subId);
-                    await app.refreshFromDiskAndMigrate();
-                    await _runSearch();
-                  },
-                  onTags: () async {
-                    final curSimple = await app.items!.listTagIdsForItem(_selected!.id);
-                    final curKv = await app.items!.listKeyValueIdsForItem(_selected!.id);
-                    final picked = await showTagManagerDialog(
-                      context,
-                      initialSimpleTagIds: curSimple,
-                      initialKeyValueIds: curKv,
-                    );
-                    if (picked == null) return;
-                    await app.setTagsForItem(
-                      itemId: _selected!.id,
-                      simpleTagIds: picked.simpleTagIds,
-                      keyValueIds: picked.keyValueIds,
-                    );
-                    await _runSearch();
-                  },
-                  onDelete: () async {
-                    final messenger = ScaffoldMessenger.of(context);
 
-                    bool proceed = true;
-                    bool dontAskAgain = false;
-
-                    if (app.settings.confirmDelete) {
-                      proceed = (await showDialog<bool>(
-                            context: context,
-                            builder: (ctx) {
-                              bool localDontAsk = false;
-                              return StatefulBuilder(
-                                builder: (ctx, setStateSB) => AlertDialog(
-                                  title: const Text('Usunąć element?'),
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text('To usunie element oraz fizyczny plik z /Library/files.'),
-                                      const SizedBox(height: 12),
-                                      CheckboxListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        value: localDontAsk,
-                                        title: const Text('Nie pytaj więcej'),
-                                        onChanged: (v) => setStateSB(() => localDontAsk = v ?? false),
-                                      ),
-                                    ],
-                                  ),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
-                                    FilledButton(
-                                      onPressed: () {
-                                        dontAskAgain = localDontAsk;
-                                        Navigator.pop(ctx, true);
-                                      },
-                                      child: const Text('Usuń'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          )) ??
-                          false;
-                    }
-
-                    if (!proceed) return;
-
-                    if (dontAskAgain) {
-                      await app.setConfirmDelete(false);
-                      messenger.showSnackBar(const SnackBar(content: Text('Wyłączono potwierdzanie usuwania.')));
-                    }
-
-                    final res = await app.deleteOneItem(_selected!);
-                    if (res.deleted.isNotEmpty) {
-                      messenger.showSnackBar(const SnackBar(content: Text('Usunięto.')));
-                      setState(() => _selected = null);
-                      await _runSearch();
-                    } else {
-                      messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku (np. brak uprawnień).')));
-                    }
-                  },
-                ),
-        ),
+        // Tag filter side panel
+        if (_showFilterPanel)
+          TagFilterPanel(
+            selectedSimpleTags: _simpleSelected,
+            selectedKeyValues: _kvSelected,
+            onApply: () {
+              setState(() {
+                _showFilterPanel = false;
+              });
+              _runSearch();
+            },
+            onClear: () {
+              setState(() {
+                _simpleSelected.clear();
+                _kvSelected.clear();
+              });
+            },
+            onClose: () {
+              setState(() {
+                _showFilterPanel = false;
+              });
+            },
+          ),
       ],
     );
   }
