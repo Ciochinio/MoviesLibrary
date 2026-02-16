@@ -66,12 +66,52 @@ class CategoryRepo {
 
   Future<List<Category>> listCategories() async {
     final rows = await db.query('categories', orderBy: 'name COLLATE NOCASE');
-    return rows.map((r) => Category(id: r['id'] as String, name: r['name'] as String)).toList();
+    return rows.map((r) => Category(
+      id: r['id'] as String,
+      name: r['name'] as String,
+      description: (r['description'] as String?) ?? '',
+    )).toList();
   }
 
   Future<List<Subcategory>> listSubcategories(String categoryId) async {
     final rows = await db.query('subcategories', where: 'category_id=?', whereArgs: [categoryId], orderBy: 'name COLLATE NOCASE');
-    return rows.map((r) => Subcategory(id: r['id'] as String, categoryId: r['category_id'] as String, name: r['name'] as String)).toList();
+    return rows.map((r) => Subcategory(
+      id: r['id'] as String,
+      categoryId: r['category_id'] as String,
+      name: r['name'] as String,
+      description: (r['description'] as String?) ?? '',
+    )).toList();
+  }
+
+  Future<Subcategory?> getSubcategory(String subcategoryId) async {
+    final rows = await db.query('subcategories', where: 'id=?', whereArgs: [subcategoryId], limit: 1);
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return Subcategory(
+      id: r['id'] as String,
+      categoryId: r['category_id'] as String,
+      name: r['name'] as String,
+      description: (r['description'] as String?) ?? '',
+    );
+  }
+
+  Future<Category?> getCategory(String categoryId) async {
+    final rows = await db.query('categories', where: 'id=?', whereArgs: [categoryId], limit: 1);
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return Category(
+      id: r['id'] as String,
+      name: r['name'] as String,
+      description: (r['description'] as String?) ?? '',
+    );
+  }
+
+  Future<void> updateCategoryDescription(String id, String description) async {
+    await db.update('categories', {'description': description}, where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> updateSubcategoryDescription(String id, String description) async {
+    await db.update('subcategories', {'description': description}, where: 'id=?', whereArgs: [id]);
   }
 
   Future<Category> createCategory(String name) async {
@@ -125,17 +165,25 @@ class TagRepo {
 
   Future<List<Tag>> listTags() async {
     final rows = await db.query('tags', orderBy: 'name COLLATE NOCASE');
-    return rows.map((r) => Tag(id: r['id'] as String, name: r['name'] as String)).toList();
+    return rows.map((r) => Tag(
+      id: r['id'] as String,
+      name: r['name'] as String,
+      description: (r['description'] as String?) ?? '',
+    )).toList();
   }
 
-  Future<Tag> createTag(String name) async {
+  Future<Tag> createTag(String name, {String description = ''}) async {
     final id = _uuid.v4();
-    await db.insert('tags', {'id': id, 'name': name});
-    return Tag(id: id, name: name);
+    await db.insert('tags', {'id': id, 'name': name, 'description': description});
+    return Tag(id: id, name: name, description: description);
   }
 
   Future<void> renameTag(String id, String newName) async {
     await db.update('tags', {'name': newName}, where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> updateTagDescription(String id, String description) async {
+    await db.update('tags', {'description': description}, where: 'id=?', whereArgs: [id]);
   }
 
   Future<int> countTagUsage(String tagId) async {
@@ -151,28 +199,85 @@ class TagRepo {
   }
 
   // ----------------------
-  // Key:Value tags
+  // Custom Tags (formerly Key:Value tags)
   // ----------------------
   Future<List<TagKey>> listTagKeys() async {
-    final rows = await db.query('tag_keys', orderBy: 'key COLLATE NOCASE');
+    final rows = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
     return rows
         .map((r) => TagKey(
               id: r['id'] as String,
               key: r['key'] as String,
               createdAt: DateTime.fromMillisecondsSinceEpoch(r['created_at'] as int),
+              description: (r['description'] as String?) ?? '',
+              sortOrder: (r['sort_order'] as int?) ?? 0,
             ))
         .toList();
   }
 
-  Future<TagKey> createTagKey(String key) async {
+  Future<TagKey> createTagKey(String key, {String description = ''}) async {
     final id = _uuid.v4();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert('tag_keys', {'id': id, 'key': key, 'created_at': now});
-    return TagKey(id: id, key: key, createdAt: DateTime.fromMillisecondsSinceEpoch(now));
+    // Get max sort_order and add 1
+    final maxRows = await db.rawQuery('SELECT MAX(sort_order) as max_order FROM tag_keys');
+    final maxOrder = (maxRows.first['max_order'] as int?) ?? 0;
+    final sortOrder = maxOrder + 1;
+    
+    await db.insert('tag_keys', {
+      'id': id,
+      'key': key,
+      'created_at': now,
+      'description': description,
+      'sort_order': sortOrder,
+    });
+    return TagKey(
+      id: id,
+      key: key,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(now),
+      description: description,
+      sortOrder: sortOrder,
+    );
   }
 
   Future<void> renameTagKey(String id, String newKey) async {
     await db.update('tag_keys', {'key': newKey}, where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> updateTagKeyDescription(String id, String description) async {
+    await db.update('tag_keys', {'description': description}, where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> updateTagKeySortOrder(String id, int sortOrder) async {
+    await db.update('tag_keys', {'sort_order': sortOrder}, where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> moveTagKeyUp(String id) async {
+    final keys = await listTagKeys();
+    final index = keys.indexWhere((k) => k.id == id);
+    if (index <= 0) return; // Already at top or not found
+    
+    // Swap sort_order with previous item
+    final current = keys[index];
+    final previous = keys[index - 1];
+    
+    await db.transaction((txn) async {
+      await txn.update('tag_keys', {'sort_order': previous.sortOrder}, where: 'id=?', whereArgs: [current.id]);
+      await txn.update('tag_keys', {'sort_order': current.sortOrder}, where: 'id=?', whereArgs: [previous.id]);
+    });
+  }
+
+  Future<void> moveTagKeyDown(String id) async {
+    final keys = await listTagKeys();
+    final index = keys.indexWhere((k) => k.id == id);
+    if (index < 0 || index >= keys.length - 1) return; // Already at bottom or not found
+    
+    // Swap sort_order with next item
+    final current = keys[index];
+    final next = keys[index + 1];
+    
+    await db.transaction((txn) async {
+      await txn.update('tag_keys', {'sort_order': next.sortOrder}, where: 'id=?', whereArgs: [current.id]);
+      await txn.update('tag_keys', {'sort_order': current.sortOrder}, where: 'id=?', whereArgs: [next.id]);
+    });
   }
 
   Future<int> countTagKeyUsage(String keyId) async {
@@ -355,6 +460,19 @@ class ItemRepo {
     return rows.map((r) => _rowToItem(r.cast<String, Object?>())).toList();
   }
 
+  /// Count items in a subcategory that have no tags at all (simple tags + custom tags)
+  Future<int> countUntaggedItems(String subcategoryId) async {
+    final sql = '''
+      SELECT COUNT(*) as count
+      FROM items i
+      WHERE i.subcategory_id = ?
+      AND NOT EXISTS (SELECT 1 FROM item_tags WHERE item_id = i.id)
+      AND NOT EXISTS (SELECT 1 FROM item_tag_key_values WHERE item_id = i.id)
+    ''';
+    final rows = await db.rawQuery(sql, [subcategoryId]);
+    return (rows.first['count'] as int?) ?? 0;
+  }
+
 
 /// Global tag search across the whole library (all folders).
 /// AND semantics: item must have ALL tagIds.
@@ -441,7 +559,6 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
   /// Global search with AND semantics across:
   /// - simpleTagIds (tags)
   /// - keyValueIds (tag_key_values)
-  /// - filename (partial match, case-insensitive)
   Future<List<MediaItem>> searchItemsGlobal({
     required List<String> simpleTagIds,
     required List<String> keyValueIds,
@@ -643,6 +760,78 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
         await txn.update('items', {'subcategory_id': newSubcategoryId}, where: 'id=?', whereArgs: [id]);
       }
     });
+  }
+
+  /// Rename a media item (both in database and on disk)
+  /// Returns true if successful, false if failed
+  Future<bool> renameItem(MediaItem item, String newName) async {
+    // Clean the new name (remove path separators, etc.)
+    final safeName = newName.replaceAll(RegExp(r'[/\\:*?"<>|]'), '_').trim();
+    if (safeName.isEmpty) return false;
+    
+    // Keep the original extension
+    final oldExt = p.extension(item.originalName);
+    final newExt = p.extension(safeName);
+    final finalName = newExt.isEmpty ? '$safeName$oldExt' : safeName;
+    
+    // Build new paths
+    final oldAbsPath = LibraryFolders.absPath(filesDir, item.storedRelPath);
+    final oldFile = File(oldAbsPath);
+    
+    // New stored name uses same UUID but new filename
+    final dir = p.dirname(item.storedRelPath);
+    final storedName = p.basename(item.storedRelPath); // UUID-based filename
+    final newStoredExt = p.extension(finalName);
+    final uuid = p.basenameWithoutExtension(storedName);
+    final newStoredName = '$uuid$newStoredExt';
+    final newStoredRelPath = p.posix.join(dir, newStoredName);
+    final newAbsPath = LibraryFolders.absPath(filesDir, newStoredRelPath);
+    final newFile = File(newAbsPath);
+    
+    // Check if file exists
+    if (!await oldFile.exists()) return false;
+    
+    try {
+      // 1. Rename file on disk
+      await oldFile.rename(newAbsPath);
+      
+      // 2. Update database
+      await db.update(
+        'items',
+        {
+          'original_name': finalName,
+          'stored_rel_path': newStoredRelPath,
+        },
+        where: 'id=?',
+        whereArgs: [item.id],
+      );
+      
+      // 3. Update sidecar file
+      final oldSidecar = File(_sidecarPathForAbs(oldAbsPath));
+      final newSidecar = File(_sidecarPathForAbs(newAbsPath));
+      if (await oldSidecar.exists()) {
+        try {
+          await oldSidecar.rename(newSidecar.path);
+        } catch (_) {
+          // Sidecar rename failed, not critical
+        }
+      }
+      
+      // Update the sidecar content with new name
+      await writeSidecarForItemId(item.id);
+      
+      return true;
+    } catch (e) {
+      // If database update failed, try to rename file back
+      try {
+        if (await newFile.exists() && !await oldFile.exists()) {
+          await newFile.rename(oldAbsPath);
+        }
+      } catch (_) {
+        // Best effort rollback failed
+      }
+      return false;
+    }
   }
 
   Future<({List<MediaItem> deleted, List<MediaItem> failed})> deleteItems(List<MediaItem> items) async {

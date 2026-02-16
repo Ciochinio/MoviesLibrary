@@ -1,14 +1,16 @@
 class Category {
   final String id;
   final String name;
-  Category({required this.id, required this.name});
+  final String description;
+  Category({required this.id, required this.name, this.description = ''});
 }
 
 class Subcategory {
   final String id;
   final String categoryId;
   final String name;
-  Subcategory({required this.id, required this.categoryId, required this.name});
+  final String description;
+  Subcategory({required this.id, required this.categoryId, required this.name, this.description = ''});
 }
 
 enum ItemType { video, image, other }
@@ -42,14 +44,23 @@ class MediaItem {
 class Tag {
   final String id;
   final String name;
-  Tag({required this.id, required this.name});
+  final String description;
+  Tag({required this.id, required this.name, this.description = ''});
 }
 
 class TagKey {
   final String id;
   final String key;
   final DateTime createdAt;
-  TagKey({required this.id, required this.key, required this.createdAt});
+  final String description;
+  final int sortOrder;
+  TagKey({
+    required this.id,
+    required this.key,
+    required this.createdAt,
+    this.description = '',
+    this.sortOrder = 0,
+  });
 }
 
 class TagKeyValue {

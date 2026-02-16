@@ -27,7 +27,7 @@ class TagsScreen extends StatelessWidget {
             const TabBar(
               tabs: [
                 Tab(text: 'Proste'),
-                Tab(text: 'Key:Value'),
+                Tab(text: 'Custom Tags'),
               ],
             ),
             const SizedBox(height: 12),

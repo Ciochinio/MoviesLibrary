@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onConfigure: (db) async {
           // Enforce foreign keys (needed for ON DELETE CASCADE).
           await db.execute('PRAGMA foreign_keys = ON');
@@ -22,6 +22,9 @@ class AppDb {
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
             await _upgradeToV2(db);
+          }
+          if (oldVersion < 3) {
+            await _upgradeToV3(db);
           }
         },
       ),
@@ -38,7 +41,8 @@ class AppDb {
     await db.execute('''
       CREATE TABLE categories (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        description TEXT DEFAULT ''
       );
     ''');
 
@@ -47,6 +51,7 @@ class AppDb {
         id TEXT PRIMARY KEY,
         category_id TEXT NOT NULL,
         name TEXT NOT NULL,
+        description TEXT DEFAULT '',
         FOREIGN KEY(category_id) REFERENCES categories(id)
       );
     ''');
@@ -71,7 +76,8 @@ class AppDb {
     await db.execute('''
       CREATE TABLE tags (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE
+        name TEXT NOT NULL UNIQUE,
+        description TEXT DEFAULT ''
       );
     ''');
 
@@ -85,12 +91,14 @@ class AppDb {
       );
     ''');
 
-    // Key:Value tags
+    // Custom tags (formerly Key:Value tags)
     await db.execute('''
       CREATE TABLE tag_keys (
         id TEXT PRIMARY KEY,
         key TEXT NOT NULL UNIQUE,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0
       );
     ''');
 
@@ -188,5 +196,33 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tag_key_values_key_id ON tag_key_values(key_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_item_kv_kv_id ON item_tag_key_values(key_value_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_item_kv_item_id ON item_tag_key_values(item_id);');
+  }
+
+  Future<void> _upgradeToV3(Database db) async {
+    // Add description columns to categories, subcategories, tags, and tag_keys
+    // Add sort_order to tag_keys
+    
+    // Check and add columns if they don't exist (safe migration)
+    try {
+      await db.execute("ALTER TABLE categories ADD COLUMN description TEXT DEFAULT ''");
+    } catch (_) {
+      // Column already exists
+    }
+    
+    try {
+      await db.execute("ALTER TABLE subcategories ADD COLUMN description TEXT DEFAULT ''");
+    } catch (_) {}
+    
+    try {
+      await db.execute("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
+    } catch (_) {}
+    
+    try {
+      await db.execute("ALTER TABLE tag_keys ADD COLUMN description TEXT DEFAULT ''");
+    } catch (_) {}
+    
+    try {
+      await db.execute("ALTER TABLE tag_keys ADD COLUMN sort_order INTEGER DEFAULT 0");
+    } catch (_) {}
   }
 }
