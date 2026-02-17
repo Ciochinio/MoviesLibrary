@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../core/library_folders.dart';
+import '../../core/thumbnail_service.dart';
 
 import '../widgets/tag_manager_dialog.dart';
 
@@ -46,46 +47,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _refreshFromDisk() async {
     final app = context.read<AppState>();
     if (!app.isReady) return;
-
     await _runWithProgress(
       title: 'Odświeżanie biblioteki…',
-      task: () async {
-        await app.refreshFromDiskAndMigrate();
-      },
+      task: () async { await app.refreshFromDiskAndMigrate(); },
     );
-
     await _reload();
   }
 
   Future<void> _exportFolder() async {
     final app = context.read<AppState>();
     if (!app.isReady || app.selectedCategoryId == null) return;
-
     final choice = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.folder),
-              title: const Text('Eksportuj aktualną subkategorię'),
-              onTap: () => Navigator.pop(ctx, 'sub'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.folder_copy),
-              title: const Text('Eksportuj całą kategorię'),
-              onTap: () => Navigator.pop(ctx, 'cat'),
-            ),
-          ],
-        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.folder), title: const Text('Eksportuj aktualną subkategorię'), onTap: () => Navigator.pop(ctx, 'sub')),
+          ListTile(leading: const Icon(Icons.folder_copy), title: const Text('Eksportuj całą kategorię'), onTap: () => Navigator.pop(ctx, 'cat')),
+        ]),
       ),
     );
     if (choice == null) return;
-
     final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
     if (dir == null) return;
-
     int count = 0;
     await _runWithProgress(
       title: 'Eksportowanie…',
@@ -97,51 +80,31 @@ class _LibraryScreenState extends State<LibraryScreen> {
         }
       },
     );
-
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Wyeksportowano $count plików.')));
   }
 
-  Future<void> _runWithProgress({
-    required String title,
-    required Future<void> Function() task,
-  }) async {
+  Future<void> _runWithProgress({required String title, required Future<void> Function() task}) async {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
         Future.microtask(() async {
-          try {
-            await task();
-          } finally {
-            if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
-          }
+          try { await task(); } finally { if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop(); }
         });
-
-        return AlertDialog(
-          title: Text(title),
-          content: const SizedBox(
-            height: 70,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        );
+        return AlertDialog(title: Text(title), content: const SizedBox(height: 70, child: Center(child: CircularProgressIndicator())));
       },
     );
   }
 
-  // ─── Import (file picker) ──────────────────
+  // ─── Import ────────────────────────────────
 
   Future<void> _import() async {
-    final app = context.read<AppState>();
-    final messenger = ScaffoldMessenger.of(context);
     final res = await FilePicker.platform.pickFiles(allowMultiple: true);
     if (res == null || res.files.isEmpty) return;
-
     final files = res.files.where((f) => f.path != null).map((f) => File(f.path!)).toList();
     await _importFiles(files);
   }
-
-  // ─── Import (drag & drop) ─────────────────
 
   Future<void> _onDropDone(DropDoneDetails details) async {
     final files = <File>[];
@@ -150,7 +113,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (await FileSystemEntity.isFile(path)) {
         files.add(File(path));
       } else if (await FileSystemEntity.isDirectory(path)) {
-        // Recursively collect files from dropped folders
         await for (final entity in Directory(path).list(recursive: true)) {
           if (entity is File) files.add(entity);
         }
@@ -162,19 +124,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _importFiles(List<File> files) async {
     final app = context.read<AppState>();
     final messenger = ScaffoldMessenger.of(context);
-
-    int imported = 0;
-    int skipped = 0;
+    int imported = 0, skipped = 0;
 
     for (final file in files) {
       try {
         final target = app.selectedSubcategoryId ?? app.stashSubcategoryId!;
-
-        final pre = await app.importSingleWithDuplicateDecision(
-          source: file,
-          targetSubcategoryId: target,
-          addDuplicateAsSeparateFile: false,
-        );
+        final pre = await app.importSingleWithDuplicateDecision(source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: false);
 
         if (pre.existingDuplicate != null && pre.inserted == null) {
           if (!mounted) return;
@@ -182,26 +137,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
             context: context,
             builder: (ctx) => AlertDialog(
               title: const Text('Duplikat wykryty'),
-              content: Text(
-                'Ten plik wygląda na duplikat istniejącego elementu:\n'
-                '${pre.existingDuplicate!.originalName}\n\n'
-                'Co chcesz zrobić?',
-              ),
+              content: Text('Ten plik wygląda na duplikat istniejącego elementu:\n${pre.existingDuplicate!.originalName}\n\nCo chcesz zrobić?'),
               actions: [
                 TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Nie dodawaj')),
                 FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Dodaj jako osobny do Stash')),
               ],
             ),
           );
-
           if (add == true) {
-            await app.importSingleWithDuplicateDecision(
-              source: file,
-              targetSubcategoryId: target,
-              addDuplicateAsSeparateFile: true,
-              precomputedSha256: pre.sha256,
-              preexistingDuplicate: pre.existingDuplicate,
-            );
+            await app.importSingleWithDuplicateDecision(source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: true, precomputedSha256: pre.sha256, preexistingDuplicate: pre.existingDuplicate);
             imported++;
           } else {
             skipped++;
@@ -213,13 +157,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         messenger.showSnackBar(SnackBar(content: Text('Błąd importu: $e')));
       }
     }
-
     if (imported > 0 || skipped > 0) {
-      messenger.showSnackBar(SnackBar(
-        content: Text('Zaimportowano $imported plików${skipped > 0 ? ', pominięto $skipped duplikatów' : ''}'),
-      ));
+      messenger.showSnackBar(SnackBar(content: Text('Zaimportowano $imported plików${skipped > 0 ? ', pominięto $skipped duplikatów' : ''}')));
     }
-
     await _reload();
   }
 
@@ -236,60 +176,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  // ─── Bulk actions ──────────────────────────
+
   Future<void> _bulkActions() async {
     final app = context.read<AppState>();
     if (app.selectedItemIds.isEmpty) return;
-
     final choice = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.sell),
-              title: const Text('Masowo dodaj tag'),
-              onTap: () => Navigator.pop(ctx, 'addTag'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.sell_outlined),
-              title: const Text('Masowo usuń tag'),
-              onTap: () => Navigator.pop(ctx, 'removeTag'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.drive_file_move),
-              title: const Text('Przenieś do subkategorii'),
-              onTap: () => Navigator.pop(ctx, 'move'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.download),
-              title: const Text('Eksportuj na dysk'),
-              onTap: () => Navigator.pop(ctx, 'export'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete),
-              title: const Text('Usuń (fizycznie)'),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
-          ],
-        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.sell), title: const Text('Masowo dodaj tag'), onTap: () => Navigator.pop(ctx, 'addTag')),
+          ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Masowo usuń tag'), onTap: () => Navigator.pop(ctx, 'removeTag')),
+          ListTile(leading: const Icon(Icons.drive_file_move), title: const Text('Przenieś do subkategorii'), onTap: () => Navigator.pop(ctx, 'move')),
+          ListTile(leading: const Icon(Icons.download), title: const Text('Eksportuj na dysk'), onTap: () => Navigator.pop(ctx, 'export')),
+          ListTile(leading: const Icon(Icons.delete), title: const Text('Usuń (fizycznie)'), onTap: () => Navigator.pop(ctx, 'delete')),
+        ]),
       ),
     );
-
     if (choice == null) return;
 
     if (choice == 'addTag' || choice == 'removeTag') {
       final tagId = await _pickTagDialog();
       if (tagId == null) return;
-      if (choice == 'addTag') {
-        await app.bulkAddTagToSelected(tagId);
-      } else {
-        await app.bulkRemoveTagFromSelected(tagId);
-      }
+      if (choice == 'addTag') { await app.bulkAddTagToSelected(tagId); } else { await app.bulkRemoveTagFromSelected(tagId); }
       await _reload();
       return;
     }
-
     if (choice == 'move') {
       final subId = await _pickSubcategoryDialog();
       if (subId == null) return;
@@ -297,27 +209,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await _reload();
       return;
     }
-
     if (choice == 'export') {
       final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
       if (dir == null) return;
-
       final toExport = loaded.where((i) => app.selectedItemIds.contains(i.id)).toList();
       int okCount = 0;
-
       for (final item in toExport) {
         final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
         if (!await src.exists()) continue;
-
-        final destPath = _uniquePath(p.join(dir, item.originalName));
-        await src.copy(destPath);
+        await src.copy(_uniquePath(p.join(dir, item.originalName)));
         okCount++;
       }
-
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Wyeksportowano $okCount plików.')));
       return;
     }
-
     if (choice == 'delete') {
       final ok = await showDialog<bool>(
         context: context,
@@ -335,14 +240,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         await _reload();
         if (res.failed.isNotEmpty) {
           final names = res.failed.map((e) => e.originalName).take(3).join(', ');
-          final more = res.failed.length > 3 ? ' (+${res.failed.length - 3})' : '';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Nie udało się usunąć ${res.failed.length} plików: $names$more')),
-          );
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nie udało się usunąć: $names')));
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Usunięto ${res.deleted.length} elementów.')),
-          );
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Usunięto ${res.deleted.length} elementów.')));
         }
       }
     }
@@ -354,22 +254,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Wybierz tag'),
-        content: SizedBox(
-          width: 420,
-          height: 300,
-          child: ListView(
-            children: [
-              for (final t in app.tagList)
-                ListTile(
-                  title: Text(t.name),
-                  onTap: () => Navigator.pop(ctx, t.id),
-                )
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zamknij')),
-        ],
+        content: SizedBox(width: 420, height: 300, child: ListView(children: [for (final t in app.tagList) ListTile(title: Text(t.name), onTap: () => Navigator.pop(ctx, t.id))])),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zamknij'))],
       ),
     );
   }
@@ -381,71 +267,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Wybierz subkategorię'),
         content: SizedBox(
-          width: 520,
-          height: 420,
-          child: ListView(
-            children: [
-              for (final c in app.categoryList) ...[
-                Padding(
-                  padding: const EdgeInsets.only(top: 12, bottom: 4),
-                  child: Text(c.name, style: Theme.of(context).textTheme.titleMedium),
-                ),
-                for (final s in app.subcategoriesFor(c.id))
-                  ListTile(
-                    dense: true,
-                    title: Text('• ${s.name}'),
-                    onTap: () => Navigator.pop(ctx, s.id),
-                  )
-              ]
-            ],
-          ),
+          width: 520, height: 420,
+          child: ListView(children: [
+            for (final c in app.categoryList) ...[
+              Padding(padding: const EdgeInsets.only(top: 12, bottom: 4), child: Text(c.name, style: Theme.of(context).textTheme.titleMedium)),
+              for (final s in app.subcategoriesFor(c.id))
+                ListTile(dense: true, title: Text('• ${s.name}'), onTap: () => Navigator.pop(ctx, s.id)),
+            ]
+          ]),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zamknij')),
-        ],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zamknij'))],
       ),
     );
   }
 
-  // ─── Right-click context menu actions ──────────────────
+  // ─── Right-click context menu ──────────────
 
   Future<void> _showRenameDialog(MediaItem item) async {
     final ctrl = TextEditingController(text: item.originalName);
     final dotIndex = item.originalName.lastIndexOf('.');
-    if (dotIndex > 0) {
-      ctrl.selection = TextSelection(baseOffset: 0, extentOffset: dotIndex);
-    }
-
+    if (dotIndex > 0) ctrl.selection = TextSelection(baseOffset: 0, extentOffset: dotIndex);
     final newName = await showDialog<String>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
         title: const Text('Zmień nazwę'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(
-            labelText: 'Nowa nazwa pliku',
-            border: OutlineInputBorder(),
-            helperText: 'Tagi i metadane zostaną zachowane',
-          ),
-          autofocus: true,
-          onSubmitted: (v) => Navigator.pop(dialogCtx, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Anuluj')),
-          FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Zmień nazwę')),
-        ],
+        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Nowa nazwa pliku', border: OutlineInputBorder(), helperText: 'Tagi i metadane zostaną zachowane'), autofocus: true, onSubmitted: (v) => Navigator.pop(dialogCtx, v)),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Anuluj')), FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Zmień nazwę'))],
       ),
     );
-
     if (newName == null || newName.trim().isEmpty || newName.trim() == item.originalName) return;
-
     final app = context.read<AppState>();
     final success = await app.items!.renameItem(item, newName.trim());
-
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(success ? 'Zmieniono nazwę' : 'Nie udało się zmienić nazwy')),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success ? 'Zmieniono nazwę' : 'Nie udało się zmienić nazwy')));
     if (success) await _reload();
   }
 
@@ -453,17 +307,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final app = context.read<AppState>();
     final curSimple = await app.items!.listTagIdsForItem(item.id);
     final curKv = await app.items!.listKeyValueIdsForItem(item.id);
-    final picked = await showTagManagerDialog(
-      context,
-      initialSimpleTagIds: curSimple,
-      initialKeyValueIds: curKv,
-    );
+    final picked = await showTagManagerDialog(context, initialSimpleTagIds: curSimple, initialKeyValueIds: curKv);
     if (picked == null) return;
-    await app.setTagsForItem(
-      itemId: item.id,
-      simpleTagIds: picked.simpleTagIds,
-      keyValueIds: picked.keyValueIds,
-    );
+    await app.setTagsForItem(itemId: item.id, simpleTagIds: picked.simpleTagIds, keyValueIds: picked.keyValueIds);
     await _reload();
   }
 
@@ -473,7 +319,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final app = context.read<AppState>();
     final list = await app.items!.listItemsByIds([item.id]);
     await app.items!.moveItemsToSubcategory(list, subId);
-    // Apply auto-tags for the destination subcategory
     await app.applyAutoTagsToItem(item.id, subId);
     await app.refreshFromDiskAndMigrate();
     await _reload();
@@ -484,13 +329,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
     if (dir == null) return;
     final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
-    if (!await src.exists()) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plik nie istnieje.')));
-      return;
-    }
-    final dest = _uniquePath(p.join(dir, item.originalName));
-    await src.copy(dest);
+    if (!await src.exists()) { if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plik nie istnieje.'))); return; }
+    await src.copy(_uniquePath(p.join(dir, item.originalName)));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wyeksportowano plik.')));
   }
@@ -498,70 +338,38 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _deleteItem(MediaItem item) async {
     final app = context.read<AppState>();
     final messenger = ScaffoldMessenger.of(context);
-
     bool proceed = true;
     bool dontAskAgain = false;
-
     if (app.settings.confirmDelete) {
       proceed = (await showDialog<bool>(
-            context: context,
-            builder: (ctx) {
-              bool localDontAsk = false;
-              return StatefulBuilder(
-                builder: (ctx, setStateSB) => AlertDialog(
-                  title: const Text('Usunąć element?'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('To usunie element oraz fizyczny plik z /Library/files.'),
-                      const SizedBox(height: 12),
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: localDontAsk,
-                        title: const Text('Nie pytaj więcej'),
-                        onChanged: (v) => setStateSB(() => localDontAsk = v ?? false),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
-                    FilledButton(
-                      onPressed: () {
-                        dontAskAgain = localDontAsk;
-                        Navigator.pop(ctx, true);
-                      },
-                      child: const Text('Usuń'),
-                    ),
-                  ],
-                ),
-              );
-            },
-          )) ??
-          false;
-
-      if (dontAskAgain) {
-        await app.setConfirmDelete(false);
-      }
+        context: context,
+        builder: (ctx) {
+          bool localDontAsk = false;
+          return StatefulBuilder(
+            builder: (ctx, setStateSB) => AlertDialog(
+              title: const Text('Usunąć element?'),
+              content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('To usunie element oraz fizyczny plik z /Library/files.'),
+                const SizedBox(height: 12),
+                CheckboxListTile(contentPadding: EdgeInsets.zero, value: localDontAsk, title: const Text('Nie pytaj więcej'), onChanged: (v) => setStateSB(() => localDontAsk = v ?? false)),
+              ]),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
+                FilledButton(onPressed: () { dontAskAgain = localDontAsk; Navigator.pop(ctx, true); }, child: const Text('Usuń')),
+              ],
+            ),
+          );
+        },
+      )) ?? false;
+      if (dontAskAgain) await app.setConfirmDelete(false);
     }
-
     if (!proceed) return;
-
-    final existed = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath)).existsSync();
-
     try {
       final res = await app.deleteOneItem(item);
-      if (res.failed.isNotEmpty) {
-        messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku (może być używany przez inny program).')));
-        return;
-      }
+      if (res.failed.isNotEmpty) { messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku.'))); return; }
       if (selectedItem?.id == item.id) selectedItem = null;
       await _reload();
-      if (!existed) {
-        messenger.showSnackBar(const SnackBar(content: Text('Plik nie istnieje — usunięto wpis z biblioteki.')));
-      } else {
-        messenger.showSnackBar(const SnackBar(content: Text('Usunięto element.')));
-      }
+      messenger.showSnackBar(const SnackBar(content: Text('Usunięto element.')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Błąd usuwania: $e')));
     }
@@ -570,45 +378,282 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _openInFolder(MediaItem item) async {
     final app = context.read<AppState>();
     final filePath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
-    if (Platform.isWindows) {
-      await Process.run('explorer', ['/select,', filePath]);
-    } else if (Platform.isMacOS) {
-      await Process.run('open', ['-R', filePath]);
-    } else if (Platform.isLinux) {
-      await Process.run('xdg-open', [p.dirname(filePath)]);
+    if (Platform.isWindows) { await Process.run('explorer', ['/select,', filePath]); }
+    else if (Platform.isMacOS) { await Process.run('open', ['-R', filePath]); }
+    else if (Platform.isLinux) { await Process.run('xdg-open', [p.dirname(filePath)]); }
+  }
+
+  // ─── Thumbnail picker (3x3 Netflix grid) ───
+
+  Future<void> _showThumbnailPicker(MediaItem item) async {
+    final app = context.read<AppState>();
+    final thumbService = ThumbnailService(app.paths!.thumbsDir);
+
+    // Check ffmpeg availability
+    final hasFfmpeg = await ThumbnailService.isFfmpegAvailable();
+    if (!hasFfmpeg) {
+      if (!mounted) return;
+      // Offer to download
+      final shouldDownload = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('ffmpeg required'),
+          content: const Text(
+            'Video thumbnails require ffmpeg, which was not found.\n\n'
+            'Would you like to download it automatically? (~90MB, one-time download)\n\n'
+            'It will be stored next to the app for portable use.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Download ffmpeg')),
+          ],
+        ),
+      );
+
+      if (shouldDownload != true || !mounted) return;
+
+      // Show download progress dialog
+      bool downloadSuccess = false;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          String statusText = 'Starting download...';
+          return StatefulBuilder(
+            builder: (ctx, setStateSB) {
+              // Start download on first build
+              if (statusText == 'Starting download...') {
+                Future.microtask(() async {
+                  downloadSuccess = await ThumbnailService.downloadFfmpeg(
+                    onProgress: (status) {
+                      if (ctx.mounted) setStateSB(() => statusText = status);
+                    },
+                  );
+                  // Small delay so user can see "Done!" message
+                  await Future.delayed(const Duration(milliseconds: 800));
+                  if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+                });
+              }
+              return AlertDialog(
+                title: const Text('Downloading ffmpeg'),
+                content: SizedBox(
+                  height: 100,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (!statusText.startsWith('Done'))
+                        const CircularProgressIndicator(),
+                      if (statusText.startsWith('Done'))
+                        const Icon(Icons.check_circle, color: Colors.green, size: 40),
+                      const SizedBox(height: 12),
+                      Text(statusText, textAlign: TextAlign.center),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (!downloadSuccess) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ffmpeg download failed. You can install it manually and add it to your PATH.')),
+        );
+        return;
+      }
+
+      // Verify it works now
+      final nowAvailable = await ThumbnailService.isFfmpegAvailable();
+      if (!nowAvailable) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ffmpeg was downloaded but could not be executed. Check your antivirus settings.')),
+        );
+        return;
+      }
     }
+
+    // ─── Extract frames and show picker ───
+    final videoPath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
+    if (!mounted) return;
+
+    final tempDir = Directory(p.join(app.paths!.thumbsDir.path, '_temp_${item.id}'));
+    await tempDir.create(recursive: true);
+
+    List<String>? framePaths;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        Future.microtask(() async {
+          framePaths = await thumbService.extract9Frames(videoPath: videoPath, tempDir: tempDir.path);
+          if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+        });
+        return const AlertDialog(
+          title: Text('Extracting frames...'),
+          content: SizedBox(height: 70, child: Center(child: CircularProgressIndicator())),
+        );
+      },
+    );
+
+    if (framePaths == null || framePaths!.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not extract frames from this video.')));
+      _cleanupTempDir(tempDir);
+      return;
+    }
+
+    if (!mounted) return;
+
+    // Show 3x3 grid picker
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Choose thumbnail'),
+        content: SizedBox(
+          width: 520,
+          height: 520,
+          child: Column(
+            children: [
+              const Text('Click a frame to set it as thumbnail'),
+              const SizedBox(height: 12),
+              Expanded(
+                child: GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 16 / 9,
+                  ),
+                  itemCount: framePaths!.length,
+                  itemBuilder: (_, i) {
+                    return InkWell(
+                      onTap: () => Navigator.pop(ctx, framePaths![i]),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          File(framePaths![i]),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image)),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, '__refresh__'),
+            child: const Text('Refresh frames'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        ],
+      ),
+    );
+
+    if (chosen == '__refresh__') {
+      _cleanupTempDir(tempDir);
+      await _showThumbnailPicker(item);
+      return;
+    }
+
+    if (chosen != null) {
+      final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: chosen);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
+      setState(() {}); // Refresh grid
+    }
+
+    _cleanupTempDir(tempDir);
+  }
+
+  void _cleanupTempDir(Directory dir) {
+    try { if (dir.existsSync()) dir.deleteSync(recursive: true); } catch (_) {}
   }
 
   void _handleContextMenu(BuildContext gridContext, MediaItem item, Offset globalPosition) {
+    final isVideo = item.type == ItemType.video;
     showMenu<String>(
       context: gridContext,
-      position: RelativeRect.fromLTRB(
-        globalPosition.dx,
-        globalPosition.dy,
-        globalPosition.dx,
-        globalPosition.dy,
-      ),
-      items: const [
-        PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit, size: 20), SizedBox(width: 12), Text('Zmień nazwę...')])),
-        PopupMenuItem(value: 'tags', child: Row(children: [Icon(Icons.sell, size: 20), SizedBox(width: 12), Text('Tagi...')])),
-        PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move, size: 20), SizedBox(width: 12), Text('Przenieś do...')])),
-        PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Eksportuj...')])),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'open_folder', child: Row(children: [Icon(Icons.folder_open, size: 20), SizedBox(width: 12), Text('Otwórz w folderze')])),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 20, color: Colors.red), SizedBox(width: 12), Text('Usuń', style: TextStyle(color: Colors.red))])),
+      position: RelativeRect.fromLTRB(globalPosition.dx, globalPosition.dy, globalPosition.dx, globalPosition.dy),
+      items: [
+        const PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit, size: 20), SizedBox(width: 12), Text('Zmień nazwę...')])),
+        const PopupMenuItem(value: 'tags', child: Row(children: [Icon(Icons.sell, size: 20), SizedBox(width: 12), Text('Tagi...')])),
+        if (isVideo)
+          const PopupMenuItem(value: 'thumbnail', child: Row(children: [Icon(Icons.photo_camera, size: 20), SizedBox(width: 12), Text('Set Thumbnail...')])),
+        const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move, size: 20), SizedBox(width: 12), Text('Przenieś do...')])),
+        const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Eksportuj...')])),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'open_folder', child: Row(children: [Icon(Icons.folder_open, size: 20), SizedBox(width: 12), Text('Otwórz w folderze')])),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 20, color: Colors.red), SizedBox(width: 12), Text('Usuń', style: TextStyle(color: Colors.red))])),
       ],
     ).then((value) async {
       if (value == null) return;
       switch (value) {
-        case 'rename':   await _showRenameDialog(item); break;
-        case 'tags':     await _showTagsForItem(item); break;
-        case 'move':     await _moveItem(item); break;
-        case 'export':   await _exportItem(item); break;
+        case 'rename':    await _showRenameDialog(item); break;
+        case 'tags':      await _showTagsForItem(item); break;
+        case 'thumbnail': await _showThumbnailPicker(item); break;
+        case 'move':      await _moveItem(item); break;
+        case 'export':    await _exportItem(item); break;
         case 'open_folder': await _openInFolder(item); break;
-        case 'delete':   await _deleteItem(item); break;
+        case 'delete':    await _deleteItem(item); break;
       }
     });
+  }
+
+  // ─── Edit subcategory description ──────────
+
+  Future<void> _editSubcategoryDescription() async {
+    final app = context.read<AppState>();
+    if (app.selectedSubcategoryId == null) return;
+
+    // Find current subcategory
+    Subcategory? currentSub;
+    for (final c in app.categoryList) {
+      for (final s in app.subcategoriesFor(c.id)) {
+        if (s.id == app.selectedSubcategoryId) { currentSub = s; break; }
+      }
+      if (currentSub != null) break;
+    }
+    if (currentSub == null) return;
+
+    final ctrl = TextEditingController(text: currentSub.description);
+    final newDesc = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit description'),
+        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder()), maxLines: 3, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (newDesc == null) return;
+    await app.categories!.updateSubcategoryDescription(currentSub.id, newDesc);
+    await app.refreshAll();
+  }
+
+  // ─── Helper: get current category & subcategory names ───
+
+  ({String categoryName, String subcategoryName, String subcategoryDescription}) _getCurrentNames(AppState app) {
+    String catName = '';
+    String subName = '';
+    String subDesc = '';
+    for (final c in app.categoryList) {
+      if (c.id == app.selectedCategoryId) catName = c.name;
+      for (final s in app.subcategoriesFor(c.id)) {
+        if (s.id == app.selectedSubcategoryId) { subName = s.name; subDesc = s.description; }
+      }
+    }
+    return (categoryName: catName, subcategoryName: subName, subcategoryDescription: subDesc);
   }
 
   // ─── Build ─────────────────────────────────
@@ -629,11 +674,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 child: Row(
                   children: [
                     Expanded(child: Text('Kategorie', style: Theme.of(context).textTheme.titleMedium)),
-                    IconButton(
-                      tooltip: 'Odśwież',
-                      onPressed: () async => _refreshFromDisk(),
-                      icon: const Icon(Icons.refresh),
-                    ),
+                    IconButton(tooltip: 'Odśwież', onPressed: () async => _refreshFromDisk(), icon: const Icon(Icons.refresh)),
                   ],
                 ),
               ),
@@ -643,23 +684,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
         const VerticalDivider(width: 1),
-        // ─── Main grid area with drag & drop ─────
+        // ─── Main content area ───────
         Expanded(
           child: Column(
             children: [
-              _TopBar(
-                onImport: _import,
-                onBulk: app.selectedItemIds.isEmpty ? null : _bulkActions,
-                onExportFolder: app.selectedSubcategoryId == null ? null : _exportFolder,
-              ),
+              // ─── Discord-style header ───
+              _buildHeader(app),
+              const Divider(height: 1),
+              // ─── Grid with drag & drop ──
               Expanded(
                 child: DropTarget(
                   onDragEntered: (_) => setState(() => _dragging = true),
                   onDragExited: (_) => setState(() => _dragging = false),
-                  onDragDone: (details) {
-                    setState(() => _dragging = false);
-                    _onDropDone(details);
-                  },
+                  onDragDone: (details) { setState(() => _dragging = false); _onDropDone(details); },
                   child: Stack(
                     children: [
                       loading
@@ -667,6 +704,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           : _ItemsGrid(
                               items: loaded,
                               libraryFilesDir: app.paths!.filesDir,
+                              thumbsDir: app.paths!.thumbsDir,
                               selectedItemId: selectedItem?.id,
                               selectedIds: app.selectedItemIds,
                               onSelect: (item) => setState(() => selectedItem = item),
@@ -678,35 +716,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           child: Container(
                             decoration: BoxDecoration(
                               color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
-                              border: Border.all(
-                                color: Theme.of(context).colorScheme.primary,
-                                width: 2,
-                              ),
+                              border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             margin: const EdgeInsets.all(8),
                             child: Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.file_upload, size: 48, color: Theme.of(context).colorScheme.primary),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Upuść pliki, aby zaimportować',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(context).colorScheme.primary,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.file_upload, size: 48, color: Theme.of(context).colorScheme.primary),
+                                const SizedBox(height: 8),
+                                Text('Upuść pliki, aby zaimportować', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+                              ]),
                             ),
                           ),
                         ),
                     ],
                   ),
                 ),
+              ),
+              // ─── Bottom toolbar ─────────
+              const Divider(height: 1),
+              _BottomBar(
+                onImport: _import,
+                onBulk: app.selectedItemIds.isEmpty ? null : _bulkActions,
+                onExportFolder: app.selectedSubcategoryId == null ? null : _exportFolder,
               ),
             ],
           ),
@@ -720,6 +752,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               : _DetailsPanel(
                   item: selectedItem!,
                   libraryFilesDir: app.paths!.filesDir,
+                  thumbsDir: app.paths!.thumbsDir,
                   onOpen: () async {
                     final filePath = LibraryFolders.absPath(app.paths!.filesDir, selectedItem!.storedRelPath);
                     await OpenFilex.open(filePath);
@@ -733,6 +766,55 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
         ),
       ],
+    );
+  }
+
+  // ─── Discord-style header ──────────────────
+
+  Widget _buildHeader(AppState app) {
+    if (app.selectedSubcategoryId == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Text('Select a subcategory', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Theme.of(context).hintColor)),
+      );
+    }
+
+    final names = _getCurrentNames(app);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.tag, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            '${names.categoryName}  >  ',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).hintColor),
+          ),
+          Text(
+            names.subcategoryName,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const Spacer(),
+          if (names.subcategoryDescription.isNotEmpty)
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  names.subcategoryDescription,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Edit description',
+            icon: const Icon(Icons.edit, size: 18),
+            onPressed: _editSubcategoryDescription,
+          ),
+        ],
+      ),
     );
   }
 
@@ -758,88 +840,52 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _buildCategoryTile(AppState app, Category c, int categoryIndex) {
     final subs = app.subcategoriesFor(c.id);
-
     return Theme(
       key: ValueKey('cat_${c.id}'),
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
-        leading: ReorderableDragStartListener(
-          index: categoryIndex,
-          child: const Icon(Icons.drag_handle, size: 20),
-        ),
+        leading: ReorderableDragStartListener(index: categoryIndex, child: const Icon(Icons.drag_handle, size: 20)),
         title: Text(c.name),
         initiallyExpanded: app.selectedCategoryId == c.id,
         children: [
-          // Subcategories - reorderable within this category
           ...List.generate(subs.length, (si) {
             final s = subs[si];
             return ListTile(
               key: ValueKey('sub_${s.id}'),
               contentPadding: const EdgeInsets.only(left: 56, right: 8),
-              title: Row(
-                children: [
-                  Expanded(child: Text(s.name)),
-                  // Untagged badge on every subcategory
-                  FutureBuilder<int>(
-                    future: app.items!.countUntaggedItems(s.id),
-                    builder: (context, snapshot) {
-                      final count = snapshot.data ?? 0;
-                      if (count == 0) return const SizedBox.shrink();
-                      return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.orange,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '$count',
-                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
+              title: Row(children: [
+                Expanded(child: Text(s.name)),
+                FutureBuilder<int>(
+                  future: app.items!.countUntaggedItems(s.id),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data ?? 0;
+                    if (count == 0) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(10)),
+                      child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    );
+                  },
+                ),
+              ]),
               selected: app.selectedSubcategoryId == s.id,
-              onTap: () async {
-                await app.selectSubcategory(c.id, s.id);
-                selectedItem = null;
-                await _reload();
-              },
+              onTap: () async { await app.selectSubcategory(c.id, s.id); selectedItem = null; await _reload(); },
             );
           }),
-          // Move subcategory up/down buttons (simple for now)
           if (subs.length > 1)
             Padding(
               padding: const EdgeInsets.only(left: 56, right: 8, bottom: 4),
-              child: Wrap(
-                spacing: 4,
-                children: [
-                  for (int si = 0; si < subs.length; si++)
-                    if (app.selectedSubcategoryId == subs[si].id) ...[
-                      IconButton(
-                        icon: const Icon(Icons.arrow_upward, size: 16),
-                        tooltip: 'Move subcategory up',
-                        onPressed: si == 0 ? null : () async {
-                          final ids = subs.map((s) => s.id).toList();
-                          final moved = ids.removeAt(si);
-                          ids.insert(si - 1, moved);
-                          await app.reorderSubcategories(c.id, ids);
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.arrow_downward, size: 16),
-                        tooltip: 'Move subcategory down',
-                        onPressed: si == subs.length - 1 ? null : () async {
-                          final ids = subs.map((s) => s.id).toList();
-                          final moved = ids.removeAt(si);
-                          ids.insert(si + 1, moved);
-                          await app.reorderSubcategories(c.id, ids);
-                        },
-                      ),
-                    ],
-                ],
-              ),
+              child: Wrap(spacing: 4, children: [
+                for (int si = 0; si < subs.length; si++)
+                  if (app.selectedSubcategoryId == subs[si].id) ...[
+                    IconButton(icon: const Icon(Icons.arrow_upward, size: 16), tooltip: 'Move subcategory up', onPressed: si == 0 ? null : () async {
+                      final ids = subs.map((s) => s.id).toList(); final moved = ids.removeAt(si); ids.insert(si - 1, moved); await app.reorderSubcategories(c.id, ids);
+                    }),
+                    IconButton(icon: const Icon(Icons.arrow_downward, size: 16), tooltip: 'Move subcategory down', onPressed: si == subs.length - 1 ? null : () async {
+                      final ids = subs.map((s) => s.id).toList(); final moved = ids.removeAt(si); ids.insert(si + 1, moved); await app.reorderSubcategories(c.id, ids);
+                    }),
+                  ],
+              ]),
             ),
           ListTile(
             contentPadding: const EdgeInsets.only(left: 56),
@@ -863,96 +909,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK')),
-        ],
-      ),
-    );
-  }
-
-  Future<List<String>?> _pickTagsForGlobalSearchDialog() async {
-    final app = context.read<AppState>();
-    final selected = <String>{};
-    selected.addAll(app.globalSearchTagIds);
-
-    return showDialog<List<String>>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setStateSB) => AlertDialog(
-          title: const Text('Szukaj po tagach (globalnie)'),
-          content: SizedBox(
-            width: 420,
-            height: 420,
-            child: ListView(
-              children: [
-                if (app.tagList.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Text('Brak tagów. Dodaj tagi w zakładce "Tagi".'),
-                  ),
-                for (final t in app.tagList)
-                  CheckboxListTile(
-                    value: selected.contains(t.id),
-                    title: Text(t.name),
-                    onChanged: (v) {
-                      setStateSB(() {
-                        if (v == true) { selected.add(t.id); } else { selected.remove(t.id); }
-                      });
-                    },
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, selected.toList()), child: const Text('Szukaj')),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<List<String>?> _pickTagsMultiDialog() async {
-    final app = context.read<AppState>();
-    final selected = <String>{};
-    final current = selectedItem == null ? <String>{} : (await app.items!.listTagsForItem(selectedItem!.id)).map((e) => e.id).toSet();
-    selected.addAll(current);
-
-    return showDialog<List<String>>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setStateSB) => AlertDialog(
-          title: const Text('Tagi'),
-          content: SizedBox(
-            width: 420,
-            height: 420,
-            child: ListView(
-              children: [
-                for (final t in app.tagList)
-                  CheckboxListTile(
-                    value: selected.contains(t.id),
-                    title: Text(t.name),
-                    onChanged: (v) {
-                      setStateSB(() {
-                        if (v == true) { selected.add(t.id); } else { selected.remove(t.id); }
-                      });
-                    },
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, selected.toList()), child: const Text('Zapisz')),
-          ],
-        ),
+        content: TextField(controller: ctrl, autofocus: true, decoration: const InputDecoration(border: OutlineInputBorder()), onSubmitted: (v) => Navigator.pop(ctx, v)),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK'))],
       ),
     );
   }
@@ -962,16 +920,15 @@ extension _FirstOrNullExt<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
 
-class _TopBar extends StatelessWidget {
+// ──────────────────────────────────────────────
+// Bottom toolbar (was _TopBar, now at bottom)
+// ──────────────────────────────────────────────
+class _BottomBar extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback? onBulk;
   final VoidCallback? onExportFolder;
 
-  const _TopBar({
-    required this.onImport,
-    required this.onBulk,
-    required this.onExportFolder,
-  });
+  const _BottomBar({required this.onImport, required this.onBulk, required this.onExportFolder});
 
   @override
   Widget build(BuildContext context) {
@@ -980,26 +937,14 @@ class _TopBar extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
-          FilledButton.icon(
-            onPressed: onImport,
-            icon: const Icon(Icons.file_upload),
-            label: const Text('Importuj'),
-          ),
+          FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Importuj')),
           const SizedBox(width: 8),
           Tooltip(
             message: 'Long-press files to select for bulk operations',
-            child: OutlinedButton.icon(
-              onPressed: onBulk,
-              icon: const Icon(Icons.select_all),
-              label: Text('Operacje masowe (${app.selectedItemIds.length})'),
-            ),
+            child: OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.select_all), label: Text('Operacje masowe (${app.selectedItemIds.length})')),
           ),
           const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: app.globalSearchActive ? null : onExportFolder,
-            icon: const Icon(Icons.folder_open),
-            label: const Text('Eksportuj folder'),
-          ),
+          OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Eksportuj folder')),
           const Spacer(),
         ],
       ),
@@ -1008,11 +953,12 @@ class _TopBar extends StatelessWidget {
 }
 
 // ──────────────────────────────────────────────
-// Items Grid with right-click and drag & drop
+// Items Grid — GIF first-frame + video thumbnails
 // ──────────────────────────────────────────────
 class _ItemsGrid extends StatelessWidget {
   final List<MediaItem> items;
   final Directory libraryFilesDir;
+  final Directory thumbsDir;
   final String? selectedItemId;
   final Set<String> selectedIds;
   final void Function(MediaItem item) onSelect;
@@ -1022,12 +968,15 @@ class _ItemsGrid extends StatelessWidget {
   const _ItemsGrid({
     required this.items,
     required this.libraryFilesDir,
+    required this.thumbsDir,
     required this.selectedItemId,
     required this.selectedIds,
     required this.onSelect,
     required this.onToggleBulk,
     required this.onContextMenu,
   });
+
+  bool _isGif(String filePath) => p.extension(filePath).toLowerCase() == '.gif';
 
   @override
   Widget build(BuildContext context) {
@@ -1048,22 +997,63 @@ class _ItemsGrid extends StatelessWidget {
         final isSelected = it.id == selectedItemId;
         final isBulk = selectedIds.contains(it.id);
 
+        // Check for custom thumbnail (videos)
+        final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
+        final hasThumb = thumbFile.existsSync();
+
         Widget thumb;
-        if (it.type == ItemType.image) {
+        if (hasThumb) {
+          // Custom thumbnail (set by user for videos)
           thumb = ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.file(File(filePath), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+            child: Image.file(thumbFile, fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48)),
           );
+        } else if (it.type == ItemType.image) {
+          if (_isGif(filePath)) {
+            // GIF: show as static first frame only (no animation in grid)
+            // ResizeImage forces decode of a single frame at the target width
+            thumb = ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image(
+                image: ResizeImage(FileImage(File(filePath)), width: 320),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48),
+              ),
+            );
+          } else {
+            // Static image
+            thumb = ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+            );
+          }
         } else if (it.type == ItemType.video) {
-          thumb = const Center(child: Icon(Icons.movie, size: 56));
+          // Video without thumbnail — show icon with play overlay
+          thumb = Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: const Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.movie, size: 40),
+                SizedBox(height: 4),
+                Text('Video', style: TextStyle(fontSize: 11)),
+              ]),
+            ),
+          );
         } else {
-          thumb = const Center(child: Icon(Icons.insert_drive_file, size: 56));
+          thumb = Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: const Center(child: Icon(Icons.insert_drive_file, size: 40)),
+          );
         }
 
         return GestureDetector(
-          onSecondaryTapDown: (details) {
-            onContextMenu(ctx, it, details.globalPosition);
-          },
+          onSecondaryTapDown: (details) => onContextMenu(ctx, it, details.globalPosition),
           child: InkWell(
             onTap: () => onSelect(it),
             onLongPress: () => onToggleBulk(it.id),
@@ -1081,6 +1071,20 @@ class _ItemsGrid extends StatelessWidget {
                 children: [
                   Expanded(child: Stack(children: [
                     Positioned.fill(child: thumb),
+                    // Video indicator overlay for thumbnailed videos
+                    if (it.type == ItemType.video && hasThumb)
+                      Positioned(
+                        right: 8, bottom: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
+                          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.play_arrow, size: 14, color: Colors.white),
+                            SizedBox(width: 2),
+                            Text('Video', style: TextStyle(color: Colors.white, fontSize: 10)),
+                          ]),
+                        ),
+                      ),
                     if (it.isDuplicate)
                       Positioned(
                         right: 8, top: 8,
@@ -1091,10 +1095,7 @@ class _ItemsGrid extends StatelessWidget {
                         ),
                       ),
                     if (isBulk)
-                      Positioned(
-                        left: 8, top: 8,
-                        child: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary),
-                      ),
+                      Positioned(left: 8, top: 8, child: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary)),
                   ])),
                   Padding(
                     padding: const EdgeInsets.all(10),
@@ -1110,9 +1111,13 @@ class _ItemsGrid extends StatelessWidget {
   }
 }
 
+// ──────────────────────────────────────────────
+// Details Panel (with thumbnail support)
+// ──────────────────────────────────────────────
 class _DetailsPanel extends StatelessWidget {
   final MediaItem item;
   final Directory libraryFilesDir;
+  final Directory thumbsDir;
   final VoidCallback onOpen;
   final VoidCallback onExport;
   final VoidCallback onMove;
@@ -1124,6 +1129,7 @@ class _DetailsPanel extends StatelessWidget {
   const _DetailsPanel({
     required this.item,
     required this.libraryFilesDir,
+    required this.thumbsDir,
     required this.onOpen,
     required this.onExport,
     required this.onMove,
@@ -1136,6 +1142,18 @@ class _DetailsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final filePath = LibraryFolders.absPath(libraryFilesDir, item.storedRelPath);
+    final thumbFile = File(p.join(thumbsDir.path, '${item.id}.jpg'));
+    final hasThumb = thumbFile.existsSync();
+
+    Widget preview;
+    if (item.type == ItemType.image) {
+      preview = ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(File(filePath), fit: BoxFit.contain));
+    } else if (hasThumb) {
+      preview = ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(thumbFile, fit: BoxFit.contain));
+    } else {
+      preview = Center(child: Icon(item.type == ItemType.video ? Icons.movie : Icons.insert_drive_file, size: 72));
+    }
+
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -1143,12 +1161,7 @@ class _DetailsPanel extends StatelessWidget {
         children: [
           Text('Szczegóły', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          if (item.type == ItemType.image)
-            Expanded(
-              child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(File(filePath), fit: BoxFit.contain)),
-            )
-          else
-            Expanded(child: Center(child: Icon(item.type == ItemType.video ? Icons.movie : Icons.insert_drive_file, size: 72))),
+          Expanded(child: preview),
           const SizedBox(height: 12),
           Text(item.originalName, style: Theme.of(context).textTheme.bodyLarge),
           const SizedBox(height: 6),
