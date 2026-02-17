@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 7,
         onConfigure: (db) async {
           // Enforce foreign keys (needed for ON DELETE CASCADE).
           await db.execute('PRAGMA foreign_keys = ON');
@@ -25,6 +25,18 @@ class AppDb {
           }
           if (oldVersion < 3) {
             await _upgradeToV3(db);
+          }
+          if (oldVersion < 4) {
+            await _upgradeToV4(db);
+          }
+          if (oldVersion < 5) {
+            await _upgradeToV5(db);
+          }
+          if (oldVersion < 6) {
+            await _upgradeToV6(db);
+          }
+          if (oldVersion < 7) {
+            await _upgradeToV7(db);
           }
         },
       ),
@@ -42,7 +54,8 @@ class AppDb {
       CREATE TABLE categories (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        description TEXT DEFAULT ''
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0
       );
     ''');
 
@@ -52,6 +65,7 @@ class AppDb {
         category_id TEXT NOT NULL,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
         FOREIGN KEY(category_id) REFERENCES categories(id)
       );
     ''');
@@ -77,7 +91,8 @@ class AppDb {
       CREATE TABLE tags (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
-        description TEXT DEFAULT ''
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0
       );
     ''');
 
@@ -107,6 +122,7 @@ class AppDb {
         id TEXT PRIMARY KEY,
         key_id TEXT NOT NULL,
         value TEXT NOT NULL,
+        description TEXT DEFAULT '',
         created_at INTEGER NOT NULL,
         FOREIGN KEY(key_id) REFERENCES tag_keys(id) ON DELETE CASCADE,
         UNIQUE(key_id, value)
@@ -155,6 +171,27 @@ await db.execute('CREATE INDEX idx_tag_key_values_key_id ON tag_key_values(key_i
 await db.execute('CREATE INDEX idx_item_kv_kv_id ON item_tag_key_values(key_value_id);');
 await db.execute('CREATE INDEX idx_item_kv_item_id ON item_tag_key_values(item_id);');
 await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
+
+    // Auto-tags: tags automatically applied to new items in a subcategory
+    await db.execute('''
+      CREATE TABLE subcategory_auto_tags (
+        subcategory_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (subcategory_id, tag_id),
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE subcategory_auto_key_values (
+        subcategory_id TEXT NOT NULL,
+        key_value_id TEXT NOT NULL,
+        PRIMARY KEY (subcategory_id, key_value_id),
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        FOREIGN KEY(key_value_id) REFERENCES tag_key_values(id) ON DELETE CASCADE
+      );
+    ''');
 
   }
 
@@ -224,5 +261,97 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
     try {
       await db.execute("ALTER TABLE tag_keys ADD COLUMN sort_order INTEGER DEFAULT 0");
     } catch (_) {}
+    
+    try {
+      await db.execute("ALTER TABLE tags ADD COLUMN sort_order INTEGER DEFAULT 0");
+    } catch (_) {}
+  }
+
+  Future<void> _upgradeToV4(Database db) async {
+    try {
+      await db.execute("ALTER TABLE tags ADD COLUMN sort_order INTEGER DEFAULT 0");
+    } catch (_) {
+      // Column already exists
+    }
+    
+    try {
+      await db.execute("ALTER TABLE tag_key_values ADD COLUMN description TEXT DEFAULT ''");
+    } catch (_) {
+      // Column already exists
+    }
+  }
+
+  Future<void> _upgradeToV5(Database db) async {
+    try {
+      await db.execute("ALTER TABLE tag_key_values ADD COLUMN description TEXT DEFAULT ''");
+    } catch (_) {
+      // Column already exists
+    }
+  }
+
+  Future<void> _upgradeToV6(Database db) async {
+    // 1. Add sort_order to categories and subcategories
+    try {
+      await db.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER DEFAULT 0");
+    } catch (_) {}
+    
+    try {
+      await db.execute("ALTER TABLE subcategories ADD COLUMN sort_order INTEGER DEFAULT 0");
+    } catch (_) {}
+
+    // 2. Normalize sort_order for categories (assign 0, 1, 2, ... based on current name order)
+    final cats = await db.query('categories', orderBy: 'name COLLATE NOCASE');
+    for (int i = 0; i < cats.length; i++) {
+      await db.update('categories', {'sort_order': i}, where: 'id=?', whereArgs: [cats[i]['id']]);
+    }
+
+    // 3. Normalize sort_order for subcategories per category
+    final allSubs = await db.query('subcategories', orderBy: 'name COLLATE NOCASE');
+    // Group by category
+    final byCat = <String, List<Map<String, Object?>>>{};
+    for (final s in allSubs) {
+      final catId = s['category_id'] as String;
+      byCat.putIfAbsent(catId, () => []).add(s);
+    }
+    for (final subs in byCat.values) {
+      for (int i = 0; i < subs.length; i++) {
+        await db.update('subcategories', {'sort_order': i}, where: 'id=?', whereArgs: [subs[i]['id']]);
+      }
+    }
+
+    // 4. Normalize sort_order for tags (THE FIX for all-zero sort_order bug)
+    final tags = await db.query('tags', orderBy: 'sort_order ASC, name COLLATE NOCASE');
+    for (int i = 0; i < tags.length; i++) {
+      await db.update('tags', {'sort_order': i}, where: 'id=?', whereArgs: [tags[i]['id']]);
+    }
+
+    // 5. Normalize sort_order for tag_keys
+    final keys = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
+    for (int i = 0; i < keys.length; i++) {
+      await db.update('tag_keys', {'sort_order': i}, where: 'id=?', whereArgs: [keys[i]['id']]);
+    }
+  }
+
+  Future<void> _upgradeToV7(Database db) async {
+    // Auto-tags: tags automatically applied to new items in a subcategory
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS subcategory_auto_tags (
+        subcategory_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (subcategory_id, tag_id),
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS subcategory_auto_key_values (
+        subcategory_id TEXT NOT NULL,
+        key_value_id TEXT NOT NULL,
+        PRIMARY KEY (subcategory_id, key_value_id),
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        FOREIGN KEY(key_value_id) REFERENCES tag_key_values(id) ON DELETE CASCADE
+      );
+    ''');
   }
 }

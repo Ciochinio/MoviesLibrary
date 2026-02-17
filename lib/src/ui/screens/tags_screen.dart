@@ -8,8 +8,6 @@ class TagsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-
     return DefaultTabController(
       length: 2,
       child: Padding(
@@ -31,11 +29,11 @@ class TagsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Expanded(
+            const Expanded(
               child: TabBarView(
                 children: [
-                  _SimpleTagsTab(app: app),
-                  _KeyValueTagsTab(app: app),
+                  _SimpleTagsTab(),
+                  _KeyValueTagsTab(),
                 ],
               ),
             ),
@@ -45,44 +43,79 @@ class TagsScreen extends StatelessWidget {
     );
   }
 
-  static Future<String?> _prompt(BuildContext context, String title, {String? initial}) async {
-    final ctrl = TextEditingController(text: initial ?? '');
-    return showDialog<String>(
+  static Future<({String name, String description})?> _promptWithDescription(
+    BuildContext context, 
+    String title, 
+    {String? initialName, String? initialDescription}
+  ) async {
+    final nameCtrl = TextEditingController(text: initialName ?? '');
+    final descCtrl = TextEditingController(text: initialDescription ?? '');
+    return showDialog<({String name, String description})>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+                border: OutlineInputBorder(),
+                hintText: 'e.g., "Films by Criterion Collection"',
+              ),
+              maxLines: 2,
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, (name: nameCtrl.text, description: descCtrl.text)),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
   }
 }
 
+// ──────────────────────────────────────────────
+// Simple Tags Tab — drag-and-drop reordering
+// ──────────────────────────────────────────────
 class _SimpleTagsTab extends StatelessWidget {
-  final AppState app;
-  const _SimpleTagsTab({required this.app});
+  const _SimpleTagsTab();
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
+            Text(
+              'Drag to reorder',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+            ),
             const Spacer(),
             FilledButton.icon(
               onPressed: () async {
-                final name = await TagsScreen._prompt(context, 'Nowy tag');
-                if (name == null || name.trim().isEmpty) return;
-                await context.read<AppState>().createTag(name.trim());
+                final result = await TagsScreen._promptWithDescription(context, 'Nowy tag');
+                if (result == null || result.name.trim().isEmpty) return;
+                final a = context.read<AppState>();
+                await a.tags!.createTag(result.name.trim(), description: result.description);
+                await a.refreshAll();
               },
               icon: const Icon(Icons.add),
               label: const Text('Dodaj'),
@@ -91,13 +124,26 @@ class _SimpleTagsTab extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: ListView.separated(
+          child: ReorderableListView.builder(
+            buildDefaultDragHandles: false,
             itemCount: app.tagList.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            onReorder: (oldIndex, newIndex) async {
+              if (newIndex > oldIndex) newIndex--;
+              final ids = app.tagList.map((t) => t.id).toList();
+              final movedId = ids.removeAt(oldIndex);
+              ids.insert(newIndex, movedId);
+              await context.read<AppState>().reorderTags(ids);
+            },
             itemBuilder: (ctx, i) {
               final t = app.tagList[i];
               return ListTile(
+                key: ValueKey(t.id),
+                leading: ReorderableDragStartListener(
+                  index: i,
+                  child: const Icon(Icons.drag_handle),
+                ),
                 title: Text(t.name),
+                subtitle: t.description.isNotEmpty ? Text(t.description, maxLines: 1, overflow: TextOverflow.ellipsis) : null,
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -105,9 +151,17 @@ class _SimpleTagsTab extends StatelessWidget {
                       tooltip: 'Zmień nazwę',
                       icon: const Icon(Icons.edit),
                       onPressed: () async {
-                        final name = await TagsScreen._prompt(context, 'Nowa nazwa', initial: t.name);
-                        if (name == null || name.trim().isEmpty) return;
-                        await context.read<AppState>().renameTag(t.id, name.trim());
+                        final result = await TagsScreen._promptWithDescription(
+                          context, 
+                          'Edytuj tag',
+                          initialName: t.name,
+                          initialDescription: t.description,
+                        );
+                        if (result == null || result.name.trim().isEmpty) return;
+                        final a = context.read<AppState>();
+                        await a.tags!.renameTag(t.id, result.name.trim());
+                        await a.tags!.updateTagDescription(t.id, result.description);
+                        await a.refreshAll();
                       },
                     ),
                     IconButton(
@@ -142,23 +196,34 @@ class _SimpleTagsTab extends StatelessWidget {
   }
 }
 
+// ──────────────────────────────────────────────
+// Custom Tags (Key:Value) Tab — drag-and-drop
+// reordering for keys
+// ──────────────────────────────────────────────
 class _KeyValueTagsTab extends StatelessWidget {
-  final AppState app;
-  const _KeyValueTagsTab({required this.app});
+  const _KeyValueTagsTab();
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
+            Text(
+              'Drag to reorder keys',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+            ),
             const Spacer(),
             FilledButton.icon(
               onPressed: () async {
-                final key = await TagsScreen._prompt(context, 'Nowy klucz');
-                if (key == null || key.trim().isEmpty) return;
-                await context.read<AppState>().createTagKey(key.trim());
+                final result = await TagsScreen._promptWithDescription(context, 'Nowy klucz');
+                if (result == null || result.name.trim().isEmpty) return;
+                final a = context.read<AppState>();
+                await a.tags!.createTagKey(result.name.trim(), description: result.description);
+                await a.refreshAll();
               },
               icon: const Icon(Icons.add),
               label: const Text('Dodaj klucz'),
@@ -167,104 +232,144 @@ class _KeyValueTagsTab extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: ListView(
+          child: ReorderableListView(
+            buildDefaultDragHandles: false,
+            onReorder: (oldIndex, newIndex) async {
+              if (newIndex > oldIndex) newIndex--;
+              // Filter out the "empty" placeholder if present
+              final keyIds = app.tagKeyList.map((k) => k.id).toList();
+              if (oldIndex >= keyIds.length || newIndex >= keyIds.length) return;
+              final movedId = keyIds.removeAt(oldIndex);
+              keyIds.insert(newIndex, movedId);
+              await context.read<AppState>().reorderTagKeys(keyIds);
+            },
             children: [
-              for (final k in app.tagKeyList)
-                ExpansionTile(
-                  title: Text(k.key),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Zmień nazwę',
-                        icon: const Icon(Icons.edit),
-                        onPressed: () async {
-                          final name = await TagsScreen._prompt(context, 'Nowa nazwa klucza', initial: k.key);
-                          if (name == null || name.trim().isEmpty) return;
-                          await context.read<AppState>().renameTagKey(k.id, name.trim());
-                        },
-                      ),
-                      IconButton(
-                        tooltip: 'Usuń',
-                        icon: const Icon(Icons.delete),
-                        onPressed: () async {
-                          final usage = await context.read<AppState>().countTagKeyUsage(k.id);
-                          final ok = await showDialog<bool>(
-                            context: context,
-                            builder: (c) => AlertDialog(
-                              title: const Text('Usunąć klucz?'),
-                              content: Text('Klucz i wszystkie jego wartości zostaną usunięte z $usage przypisań.'),
-                              actions: [
-                                TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-                                FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
-                              ],
-                            ),
-                          );
-                          if (ok == true) {
-                            await context.read<AppState>().deleteTagKey(k.id);
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                  children: [
-                    for (final v in app.valuesForKey(k.id))
-                      ListTile(
-                        title: Text(v.value),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              tooltip: 'Zmień nazwę',
-                              icon: const Icon(Icons.edit),
-                              onPressed: () async {
-                                final name = await TagsScreen._prompt(context, 'Nowa wartość', initial: v.value);
-                                if (name == null || name.trim().isEmpty) return;
-                                await context.read<AppState>().renameTagKeyValue(v.id, name.trim());
-                              },
-                            ),
-                            IconButton(
-                              tooltip: 'Usuń',
-                              icon: const Icon(Icons.delete),
-                              onPressed: () async {
-                                final usage = await context.read<AppState>().countTagKeyValueUsage(v.id);
-                                final ok = await showDialog<bool>(
-                                  context: context,
-                                  builder: (c) => AlertDialog(
-                                    title: const Text('Usunąć wartość?'),
-                                    content: Text('Wartość zostanie usunięta z $usage elementów.'),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-                                      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
-                                    ],
-                                  ),
-                                );
-                                if (ok == true) {
-                                  await context.read<AppState>().deleteTagKeyValue(v.id);
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ListTile(
-                      leading: const Icon(Icons.add),
-                      title: const Text('Dodaj wartość'),
-                      onTap: () async {
-                        final value = await TagsScreen._prompt(context, 'Nowa wartość');
-                        if (value == null || value.trim().isEmpty) return;
-                        await context.read<AppState>().createTagKeyValue(k.id, value.trim());
-                      },
-                    ),
-                  ],
-                ),
+              for (int ki = 0; ki < app.tagKeyList.length; ki++)
+                _buildKeyTile(context, app, app.tagKeyList[ki], ki),
               if (app.tagKeyList.isEmpty)
                 const Padding(
+                  key: ValueKey('__empty__'),
                   padding: EdgeInsets.all(16),
                   child: Text('Brak kluczy. Dodaj pierwszy klucz przyciskiem powyżej.'),
                 ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKeyTile(BuildContext context, AppState app, dynamic k, int index) {
+    return ExpansionTile(
+      key: ValueKey(k.id),
+      leading: ReorderableDragStartListener(
+        index: index,
+        child: const Icon(Icons.drag_handle),
+      ),
+      title: Text(k.key),
+      subtitle: k.description.isNotEmpty ? Text(k.description, style: const TextStyle(fontSize: 12)) : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Zmień nazwę',
+            icon: const Icon(Icons.edit),
+            onPressed: () async {
+              final result = await TagsScreen._promptWithDescription(
+                context, 
+                'Edytuj klucz',
+                initialName: k.key,
+                initialDescription: k.description,
+              );
+              if (result == null || result.name.trim().isEmpty) return;
+              final a = context.read<AppState>();
+              await a.tags!.renameTagKey(k.id, result.name.trim());
+              await a.tags!.updateTagKeyDescription(k.id, result.description);
+              await a.refreshAll();
+            },
+          ),
+          IconButton(
+            tooltip: 'Usuń',
+            icon: const Icon(Icons.delete),
+            onPressed: () async {
+              final usage = await context.read<AppState>().countTagKeyUsage(k.id);
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (c) => AlertDialog(
+                  title: const Text('Usunąć klucz?'),
+                  content: Text('Klucz i wszystkie jego wartości zostaną usunięte z $usage przypisań.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
+                    FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+                  ],
+                ),
+              );
+              if (ok == true) {
+                await context.read<AppState>().deleteTagKey(k.id);
+              }
+            },
+          ),
+        ],
+      ),
+      children: [
+        for (final v in app.valuesForKey(k.id))
+          ListTile(
+            title: Text(v.value),
+            subtitle: v.description.isNotEmpty ? Text(v.description, maxLines: 1, overflow: TextOverflow.ellipsis) : null,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Zmień nazwę',
+                  icon: const Icon(Icons.edit),
+                  onPressed: () async {
+                    final result = await TagsScreen._promptWithDescription(
+                      context,
+                      'Edytuj wartość',
+                      initialName: v.value,
+                      initialDescription: v.description,
+                    );
+                    if (result == null || result.name.trim().isEmpty) return;
+                    final a = context.read<AppState>();
+                    await a.tags!.renameValue(v.id, result.name.trim());
+                    await a.tags!.updateValueDescription(v.id, result.description);
+                    await a.refreshAll();
+                  },
+                ),
+                IconButton(
+                  tooltip: 'Usuń',
+                  icon: const Icon(Icons.delete),
+                  onPressed: () async {
+                    final usage = await context.read<AppState>().countTagKeyValueUsage(v.id);
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (c) => AlertDialog(
+                        title: const Text('Usunąć wartość?'),
+                        content: Text('Wartość zostanie usunięta z $usage elementów.'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
+                          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) {
+                      await context.read<AppState>().deleteTagKeyValue(v.id);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ListTile(
+          leading: const Icon(Icons.add),
+          title: const Text('Dodaj wartość'),
+          onTap: () async {
+            final result = await TagsScreen._promptWithDescription(context, 'Nowa wartość');
+            if (result == null || result.name.trim().isEmpty) return;
+            final a = context.read<AppState>();
+            await a.tags!.createValue(k.id, result.name.trim(), description: result.description);
+            await a.refreshAll();
+          },
         ),
       ],
     );

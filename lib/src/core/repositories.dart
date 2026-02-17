@@ -65,21 +65,23 @@ class CategoryRepo {
   CategoryRepo(this.db);
 
   Future<List<Category>> listCategories() async {
-    final rows = await db.query('categories', orderBy: 'name COLLATE NOCASE');
+    final rows = await db.query('categories', orderBy: 'sort_order ASC, name COLLATE NOCASE');
     return rows.map((r) => Category(
       id: r['id'] as String,
       name: r['name'] as String,
       description: (r['description'] as String?) ?? '',
+      sortOrder: (r['sort_order'] as int?) ?? 0,
     )).toList();
   }
 
   Future<List<Subcategory>> listSubcategories(String categoryId) async {
-    final rows = await db.query('subcategories', where: 'category_id=?', whereArgs: [categoryId], orderBy: 'name COLLATE NOCASE');
+    final rows = await db.query('subcategories', where: 'category_id=?', whereArgs: [categoryId], orderBy: 'sort_order ASC, name COLLATE NOCASE');
     return rows.map((r) => Subcategory(
       id: r['id'] as String,
       categoryId: r['category_id'] as String,
       name: r['name'] as String,
       description: (r['description'] as String?) ?? '',
+      sortOrder: (r['sort_order'] as int?) ?? 0,
     )).toList();
   }
 
@@ -92,6 +94,7 @@ class CategoryRepo {
       categoryId: r['category_id'] as String,
       name: r['name'] as String,
       description: (r['description'] as String?) ?? '',
+      sortOrder: (r['sort_order'] as int?) ?? 0,
     );
   }
 
@@ -103,6 +106,7 @@ class CategoryRepo {
       id: r['id'] as String,
       name: r['name'] as String,
       description: (r['description'] as String?) ?? '',
+      sortOrder: (r['sort_order'] as int?) ?? 0,
     );
   }
 
@@ -117,8 +121,10 @@ class CategoryRepo {
   Future<Category> createCategory(String name) async {
     final id = _uuid.v4();
     final safe = LibraryFolders.safeSegment(name);
-    await db.insert('categories', {'id': id, 'name': safe});
-    return Category(id: id, name: safe);
+    final maxRows = await db.rawQuery('SELECT MAX(sort_order) as m FROM categories');
+    final maxOrder = (maxRows.first['m'] as int?) ?? 0;
+    await db.insert('categories', {'id': id, 'name': safe, 'sort_order': maxOrder + 1});
+    return Category(id: id, name: safe, sortOrder: maxOrder + 1);
   }
 
   Future<void> renameCategory(String id, String newName) async {
@@ -129,13 +135,70 @@ class CategoryRepo {
   Future<Subcategory> createSubcategory(String categoryId, String name) async {
     final id = _uuid.v4();
     final safe = LibraryFolders.safeSegment(name);
-    await db.insert('subcategories', {'id': id, 'category_id': categoryId, 'name': safe});
-    return Subcategory(id: id, categoryId: categoryId, name: safe);
+    final maxRows = await db.rawQuery('SELECT MAX(sort_order) as m FROM subcategories WHERE category_id=?', [categoryId]);
+    final maxOrder = (maxRows.first['m'] as int?) ?? 0;
+    await db.insert('subcategories', {'id': id, 'category_id': categoryId, 'name': safe, 'sort_order': maxOrder + 1});
+    return Subcategory(id: id, categoryId: categoryId, name: safe, sortOrder: maxOrder + 1);
   }
 
   Future<void> renameSubcategory(String id, String newName) async {
     final safe = LibraryFolders.safeSegment(newName);
     await db.update('subcategories', {'name': safe}, where: 'id=?', whereArgs: [id]);
+  }
+
+  /// Reorder categories: pass the full list of category IDs in their new order.
+  Future<void> reorderCategories(List<String> orderedIds) async {
+    await db.transaction((txn) async {
+      for (int i = 0; i < orderedIds.length; i++) {
+        await txn.update('categories', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
+      }
+    });
+  }
+
+  /// Reorder subcategories within a category: pass list of subcategory IDs in new order.
+  Future<void> reorderSubcategories(List<String> orderedIds) async {
+    await db.transaction((txn) async {
+      for (int i = 0; i < orderedIds.length; i++) {
+        await txn.update('subcategories', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
+      }
+    });
+  }
+
+  // ─── Auto-tags per subcategory ──────────────
+
+  Future<Set<String>> getAutoTagIds(String subcategoryId) async {
+    final rows = await db.query('subcategory_auto_tags', where: 'subcategory_id=?', whereArgs: [subcategoryId]);
+    return rows.map((r) => r['tag_id'] as String).toSet();
+  }
+
+  Future<Set<String>> getAutoKeyValueIds(String subcategoryId) async {
+    final rows = await db.query('subcategory_auto_key_values', where: 'subcategory_id=?', whereArgs: [subcategoryId]);
+    return rows.map((r) => r['key_value_id'] as String).toSet();
+  }
+
+  Future<void> setAutoTags(String subcategoryId, Set<String> tagIds, Set<String> keyValueIds) async {
+    await db.transaction((txn) async {
+      await txn.delete('subcategory_auto_tags', where: 'subcategory_id=?', whereArgs: [subcategoryId]);
+      await txn.delete('subcategory_auto_key_values', where: 'subcategory_id=?', whereArgs: [subcategoryId]);
+      for (final tagId in tagIds) {
+        await txn.insert('subcategory_auto_tags', {'subcategory_id': subcategoryId, 'tag_id': tagId}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      for (final kvId in keyValueIds) {
+        await txn.insert('subcategory_auto_key_values', {'subcategory_id': subcategoryId, 'key_value_id': kvId}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
+  }
+
+  Future<void> clearAutoTags(String subcategoryId) async {
+    await db.delete('subcategory_auto_tags', where: 'subcategory_id=?', whereArgs: [subcategoryId]);
+    await db.delete('subcategory_auto_key_values', where: 'subcategory_id=?', whereArgs: [subcategoryId]);
+  }
+
+  /// Returns true if this subcategory has any auto-tags configured.
+  Future<bool> hasAutoTags(String subcategoryId) async {
+    final t = await db.rawQuery('SELECT COUNT(*) as c FROM subcategory_auto_tags WHERE subcategory_id=?', [subcategoryId]);
+    final k = await db.rawQuery('SELECT COUNT(*) as c FROM subcategory_auto_key_values WHERE subcategory_id=?', [subcategoryId]);
+    return ((t.first['c'] as int?) ?? 0) > 0 || ((k.first['c'] as int?) ?? 0) > 0;
   }
 
   /// Deletes subcategory and moves its items to stashSubcategoryId.
@@ -164,18 +227,29 @@ class TagRepo {
   TagRepo(this.db);
 
   Future<List<Tag>> listTags() async {
-    final rows = await db.query('tags', orderBy: 'name COLLATE NOCASE');
+    final rows = await db.query('tags', orderBy: 'sort_order ASC, name COLLATE NOCASE');
     return rows.map((r) => Tag(
       id: r['id'] as String,
       name: r['name'] as String,
       description: (r['description'] as String?) ?? '',
+      sortOrder: (r['sort_order'] as int?) ?? 0,
     )).toList();
   }
 
   Future<Tag> createTag(String name, {String description = ''}) async {
     final id = _uuid.v4();
-    await db.insert('tags', {'id': id, 'name': name, 'description': description});
-    return Tag(id: id, name: name, description: description);
+    // Get max sort_order and add 1
+    final maxRows = await db.rawQuery('SELECT MAX(sort_order) as max_order FROM tags');
+    final maxOrder = (maxRows.first['max_order'] as int?) ?? 0;
+    final sortOrder = maxOrder + 1;
+    
+    await db.insert('tags', {
+      'id': id,
+      'name': name,
+      'description': description,
+      'sort_order': sortOrder,
+    });
+    return Tag(id: id, name: name, description: description, sortOrder: sortOrder);
   }
 
   Future<void> renameTag(String id, String newName) async {
@@ -184,6 +258,59 @@ class TagRepo {
 
   Future<void> updateTagDescription(String id, String description) async {
     await db.update('tags', {'description': description}, where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> moveTagUp(String id) async {
+    // 1. Normalize sort_order values (fixes the all-zero bug)
+    await _normalizeTagSortOrders();
+    // 2. Re-read after normalization
+    final tags = await listTags();
+    final index = tags.indexWhere((t) => t.id == id);
+    if (index <= 0) return; // Already at top or not found
+    
+    // Swap sort_order with previous item
+    final current = tags[index];
+    final previous = tags[index - 1];
+    
+    await db.transaction((txn) async {
+      await txn.update('tags', {'sort_order': previous.sortOrder}, where: 'id=?', whereArgs: [current.id]);
+      await txn.update('tags', {'sort_order': current.sortOrder}, where: 'id=?', whereArgs: [previous.id]);
+    });
+  }
+
+  Future<void> moveTagDown(String id) async {
+    await _normalizeTagSortOrders();
+    final tags = await listTags();
+    final index = tags.indexWhere((t) => t.id == id);
+    if (index < 0 || index >= tags.length - 1) return; // Already at bottom or not found
+    
+    final current = tags[index];
+    final next = tags[index + 1];
+    
+    await db.transaction((txn) async {
+      await txn.update('tags', {'sort_order': next.sortOrder}, where: 'id=?', whereArgs: [current.id]);
+      await txn.update('tags', {'sort_order': current.sortOrder}, where: 'id=?', whereArgs: [next.id]);
+    });
+  }
+
+  /// Reorder simple tags: pass the full list of tag IDs in their new order.
+  Future<void> reorderTags(List<String> orderedIds) async {
+    await db.transaction((txn) async {
+      for (int i = 0; i < orderedIds.length; i++) {
+        await txn.update('tags', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
+      }
+    });
+  }
+
+  /// Ensures every tag has a unique, sequential sort_order.
+  Future<void> _normalizeTagSortOrders() async {
+    final tags = await db.query('tags', orderBy: 'sort_order ASC, name COLLATE NOCASE');
+    for (int i = 0; i < tags.length; i++) {
+      final current = (tags[i]['sort_order'] as int?) ?? 0;
+      if (current != i) {
+        await db.update('tags', {'sort_order': i}, where: 'id=?', whereArgs: [tags[i]['id']]);
+      }
+    }
   }
 
   Future<int> countTagUsage(String tagId) async {
@@ -251,11 +378,11 @@ class TagRepo {
   }
 
   Future<void> moveTagKeyUp(String id) async {
+    await _normalizeTagKeySortOrders();
     final keys = await listTagKeys();
     final index = keys.indexWhere((k) => k.id == id);
     if (index <= 0) return; // Already at top or not found
     
-    // Swap sort_order with previous item
     final current = keys[index];
     final previous = keys[index - 1];
     
@@ -266,11 +393,11 @@ class TagRepo {
   }
 
   Future<void> moveTagKeyDown(String id) async {
+    await _normalizeTagKeySortOrders();
     final keys = await listTagKeys();
     final index = keys.indexWhere((k) => k.id == id);
     if (index < 0 || index >= keys.length - 1) return; // Already at bottom or not found
     
-    // Swap sort_order with next item
     final current = keys[index];
     final next = keys[index + 1];
     
@@ -278,6 +405,26 @@ class TagRepo {
       await txn.update('tag_keys', {'sort_order': next.sortOrder}, where: 'id=?', whereArgs: [current.id]);
       await txn.update('tag_keys', {'sort_order': current.sortOrder}, where: 'id=?', whereArgs: [next.id]);
     });
+  }
+
+  /// Reorder custom tag keys: pass the full list of key IDs in their new order.
+  Future<void> reorderTagKeys(List<String> orderedIds) async {
+    await db.transaction((txn) async {
+      for (int i = 0; i < orderedIds.length; i++) {
+        await txn.update('tag_keys', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
+      }
+    });
+  }
+
+  /// Ensures every tag key has a unique, sequential sort_order.
+  Future<void> _normalizeTagKeySortOrders() async {
+    final keys = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
+    for (int i = 0; i < keys.length; i++) {
+      final current = (keys[i]['sort_order'] as int?) ?? 0;
+      if (current != i) {
+        await db.update('tag_keys', {'sort_order': i}, where: 'id=?', whereArgs: [keys[i]['id']]);
+      }
+    }
   }
 
   Future<int> countTagKeyUsage(String keyId) async {
@@ -297,7 +444,7 @@ class TagRepo {
 
   Future<List<TagKeyValue>> listValuesForKey(String keyId) async {
     final rows = await db.rawQuery(
-      'SELECT kv.id, kv.key_id, k.key as key, kv.value, kv.created_at '
+      'SELECT kv.id, kv.key_id, k.key as key, kv.value, kv.description, kv.created_at '
       'FROM tag_key_values kv JOIN tag_keys k ON k.id = kv.key_id '
       'WHERE kv.key_id=? '
       'ORDER BY kv.value COLLATE NOCASE',
@@ -309,22 +456,40 @@ class TagRepo {
               keyId: r['key_id'] as String,
               key: r['key'] as String,
               value: r['value'] as String,
+              description: (r['description'] as String?) ?? '',
               createdAt: DateTime.fromMillisecondsSinceEpoch(r['created_at'] as int),
             ))
         .toList();
   }
 
-  Future<TagKeyValue> createValue(String keyId, String value) async {
+  Future<TagKeyValue> createValue(String keyId, String value, {String description = ''}) async {
     final id = _uuid.v4();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert('tag_key_values', {'id': id, 'key_id': keyId, 'value': value, 'created_at': now});
+    await db.insert('tag_key_values', {
+      'id': id,
+      'key_id': keyId,
+      'value': value,
+      'description': description,
+      'created_at': now,
+    });
     final keyRow = await db.query('tag_keys', where: 'id=?', whereArgs: [keyId], limit: 1);
     final keyName = keyRow.isEmpty ? '' : (keyRow.first['key'] as String);
-    return TagKeyValue(id: id, keyId: keyId, key: keyName, value: value, createdAt: DateTime.fromMillisecondsSinceEpoch(now));
+    return TagKeyValue(
+      id: id,
+      keyId: keyId,
+      key: keyName,
+      value: value,
+      description: description,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(now),
+    );
   }
 
   Future<void> renameValue(String valueId, String newValue) async {
     await db.update('tag_key_values', {'value': newValue}, where: 'id=?', whereArgs: [valueId]);
+  }
+
+  Future<void> updateValueDescription(String valueId, String description) async {
+    await db.update('tag_key_values', {'description': description}, where: 'id=?', whereArgs: [valueId]);
   }
 
   Future<int> countValueUsage(String valueId) async {

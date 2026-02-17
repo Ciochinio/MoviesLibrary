@@ -91,18 +91,31 @@ class _CategoryCard extends StatelessWidget {
             ],
           ),
         ),
+        const PopupMenuItem(
+          value: 'auto_tags',
+          child: Row(
+            children: [
+              Icon(Icons.auto_fix_high),
+              SizedBox(width: 12),
+              Text('Auto-Tags Settings...'),
+            ],
+          ),
+        ),
       ],
     ).then((value) async {
       if (value == 'tag_all') {
         await _showBulkTagDialog(context, subcategoryId, subcategoryName);
+      } else if (value == 'auto_tags') {
+        await _showAutoTagDialog(context, subcategoryId, subcategoryName);
       }
     });
   }
 
+  // ─── Bulk Tag Dialog (tabbed: Simple / Custom) ─────
+
   Future<void> _showBulkTagDialog(BuildContext context, String subcategoryId, String subcategoryName) async {
     final app = context.read<AppState>();
     
-    // Get count of items in subcategory
     final items = await app.items!.listItemsInSubcategory(subcategoryId);
     if (items.isEmpty) {
       if (!context.mounted) return;
@@ -112,93 +125,120 @@ class _CategoryCard extends StatelessWidget {
       return;
     }
 
-    // Show tag selection dialog
     final selectedTags = <String>{};
     final selectedKeyValues = <String>{};
+    bool alsoAutoTag = false;
+
+    // Load current auto-tags to show in checkbox label
+    final currentAutoTags = await app.categories!.getAutoTagIds(subcategoryId);
+    final currentAutoKv = await app.categories!.getAutoKeyValueIds(subcategoryId);
+
+    if (!context.mounted) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          title: Text('Tag All Items in "$subcategoryName"'),
-          content: SizedBox(
-            width: 500,
-            height: 500,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('This will add tags to ${items.length} items.', 
-                  style: Theme.of(ctx).textTheme.bodyLarge),
-                const SizedBox(height: 16),
-                Text('Simple Tags:', style: Theme.of(ctx).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                if (app.tagList.isEmpty)
-                  const Text('No tags available. Create some in Tags screen.')
-                else
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: app.tagList.map((tag) => FilterChip(
-                      label: Text(tag.name),
-                      selected: selectedTags.contains(tag.id),
-                      onSelected: (selected) {
-                        setState(() {
-                          if (selected) {
-                            selectedTags.add(tag.id);
-                          } else {
-                            selectedTags.remove(tag.id);
-                          }
-                        });
-                      },
-                    )).toList(),
+        builder: (ctx, setState) => DefaultTabController(
+          length: 2,
+          child: AlertDialog(
+            title: Text('Tag All Items in "$subcategoryName"'),
+            content: SizedBox(
+              width: 550,
+              height: 550,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('This will add tags to ${items.length} items.',
+                    style: Theme.of(ctx).textTheme.bodyLarge),
+                  const SizedBox(height: 12),
+                  const TabBar(
+                    tabs: [
+                      Tab(text: 'Simple Tags'),
+                      Tab(text: 'Custom Tags'),
+                    ],
                   ),
-                const SizedBox(height: 16),
-                const Divider(),
-                const SizedBox(height: 8),
-                Text('Custom Tags:', style: Theme.of(ctx).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                if (app.tagKeyList.isEmpty)
-                  const Text('No custom tags available.')
-                else
+                  const SizedBox(height: 8),
                   Expanded(
-                    child: ListView(
-                      children: app.tagKeyList.map((key) {
-                        final values = app.valuesForKey(key.id);
-                        return ExpansionTile(
-                          title: Text(key.key),
-                          children: values.map((v) => CheckboxListTile(
-                            dense: true,
-                            value: selectedKeyValues.contains(v.id),
-                            title: Text(v.value),
-                            onChanged: (checked) {
-                              setState(() {
-                                if (checked == true) {
-                                  selectedKeyValues.add(v.id);
-                                } else {
-                                  selectedKeyValues.remove(v.id);
-                                }
-                              });
-                            },
-                          )).toList(),
-                        );
-                      }).toList(),
+                    child: TabBarView(
+                      children: [
+                        // ─── Simple Tags tab ───
+                        app.tagList.isEmpty
+                            ? const Center(child: Text('No tags available. Create some in Tags screen.'))
+                            : ListView(
+                                children: app.tagList.map((tag) => CheckboxListTile(
+                                  value: selectedTags.contains(tag.id),
+                                  title: Text(tag.name),
+                                  subtitle: tag.description.isNotEmpty
+                                      ? Text(tag.description, maxLines: 1, overflow: TextOverflow.ellipsis)
+                                      : null,
+                                  onChanged: (checked) {
+                                    setState(() {
+                                      if (checked == true) {
+                                        selectedTags.add(tag.id);
+                                      } else {
+                                        selectedTags.remove(tag.id);
+                                      }
+                                    });
+                                  },
+                                )).toList(),
+                              ),
+                        // ─── Custom Tags tab ───
+                        app.tagKeyList.isEmpty
+                            ? const Center(child: Text('No custom tags available.'))
+                            : ListView(
+                                children: app.tagKeyList.map((key) {
+                                  final values = app.valuesForKey(key.id);
+                                  return ExpansionTile(
+                                    title: Text(key.key),
+                                    subtitle: key.description.isNotEmpty
+                                        ? Text(key.description, style: const TextStyle(fontSize: 12))
+                                        : null,
+                                    children: values.map((v) => CheckboxListTile(
+                                      dense: true,
+                                      value: selectedKeyValues.contains(v.id),
+                                      title: Text(v.value),
+                                      subtitle: v.description.isNotEmpty
+                                          ? Text(v.description, maxLines: 1, overflow: TextOverflow.ellipsis)
+                                          : null,
+                                      onChanged: (checked) {
+                                        setState(() {
+                                          if (checked == true) {
+                                            selectedKeyValues.add(v.id);
+                                          } else {
+                                            selectedKeyValues.remove(v.id);
+                                          }
+                                        });
+                                      },
+                                    )).toList(),
+                                  );
+                                }).toList(),
+                              ),
+                      ],
                     ),
                   ),
-              ],
+                  const Divider(),
+                  CheckboxListTile(
+                    value: alsoAutoTag,
+                    title: const Text('Also apply to future imports'),
+                    subtitle: const Text('New files added to this folder will get these tags automatically'),
+                    onChanged: (v) => setState(() => alsoAutoTag = v ?? false),
+                  ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: (selectedTags.isEmpty && selectedKeyValues.isEmpty)
+                    ? null
+                    : () => Navigator.pop(ctx, true),
+                child: const Text('Apply Tags'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: (selectedTags.isEmpty && selectedKeyValues.isEmpty)
-                  ? null
-                  : () => Navigator.pop(ctx, true),
-              child: const Text('Apply Tags'),
-            ),
-          ],
         ),
       ),
     );
@@ -206,28 +246,168 @@ class _CategoryCard extends StatelessWidget {
     if (confirmed != true) return;
     if (!context.mounted) return;
 
-    // Apply tags
     final messenger = ScaffoldMessenger.of(context);
     
     try {
       int taggedCount = 0;
       for (final tagId in selectedTags) {
         final count = await app.items!.bulkAddTagToSubcategory(subcategoryId, tagId);
-        taggedCount = count; // All items get tagged
+        taggedCount = count;
       }
       
       for (final kvId in selectedKeyValues) {
         await app.items!.bulkAddKeyValueToSubcategory(subcategoryId, kvId);
       }
 
+      // If "also auto-tag" checked, merge selected tags with existing auto-tags
+      if (alsoAutoTag) {
+        final mergedTags = {...currentAutoTags, ...selectedTags};
+        final mergedKv = {...currentAutoKv, ...selectedKeyValues};
+        await app.categories!.setAutoTags(subcategoryId, mergedTags, mergedKv);
+      }
+
+      final autoMsg = alsoAutoTag ? ' (+ auto-tag enabled)' : '';
       messenger.showSnackBar(
-        SnackBar(content: Text('Tagged $taggedCount items with ${selectedTags.length} tags and ${selectedKeyValues.length} custom tags')),
+        SnackBar(content: Text('Tagged $taggedCount items with ${selectedTags.length} tags and ${selectedKeyValues.length} custom tags$autoMsg')),
       );
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
     }
+  }
+
+  // ─── Auto-Tag Settings Dialog ──────────────
+
+  Future<void> _showAutoTagDialog(BuildContext context, String subcategoryId, String subcategoryName) async {
+    final app = context.read<AppState>();
+    
+    final selectedTags = (await app.categories!.getAutoTagIds(subcategoryId)).toSet();
+    final selectedKeyValues = (await app.categories!.getAutoKeyValueIds(subcategoryId)).toSet();
+
+    // Make mutable copies
+    final editTags = <String>{...selectedTags};
+    final editKv = <String>{...selectedKeyValues};
+
+    if (!context.mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => DefaultTabController(
+          length: 2,
+          child: AlertDialog(
+            title: Text('Auto-Tags for "$subcategoryName"'),
+            content: SizedBox(
+              width: 550,
+              height: 500,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Files imported or moved into this folder will automatically get these tags.',
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  const TabBar(
+                    tabs: [
+                      Tab(text: 'Simple Tags'),
+                      Tab(text: 'Custom Tags'),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        // ─── Simple Tags tab ───
+                        app.tagList.isEmpty
+                            ? const Center(child: Text('No tags available.'))
+                            : ListView(
+                                children: app.tagList.map((tag) => CheckboxListTile(
+                                  value: editTags.contains(tag.id),
+                                  title: Text(tag.name),
+                                  subtitle: tag.description.isNotEmpty
+                                      ? Text(tag.description, maxLines: 1, overflow: TextOverflow.ellipsis)
+                                      : null,
+                                  onChanged: (checked) {
+                                    setState(() {
+                                      if (checked == true) {
+                                        editTags.add(tag.id);
+                                      } else {
+                                        editTags.remove(tag.id);
+                                      }
+                                    });
+                                  },
+                                )).toList(),
+                              ),
+                        // ─── Custom Tags tab ───
+                        app.tagKeyList.isEmpty
+                            ? const Center(child: Text('No custom tags available.'))
+                            : ListView(
+                                children: app.tagKeyList.map((key) {
+                                  final values = app.valuesForKey(key.id);
+                                  return ExpansionTile(
+                                    title: Text(key.key),
+                                    children: values.map((v) => CheckboxListTile(
+                                      dense: true,
+                                      value: editKv.contains(v.id),
+                                      title: Text(v.value),
+                                      onChanged: (checked) {
+                                        setState(() {
+                                          if (checked == true) {
+                                            editKv.add(v.id);
+                                          } else {
+                                            editKv.remove(v.id);
+                                          }
+                                        });
+                                      },
+                                    )).toList(),
+                                  );
+                                }).toList(),
+                              ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              if (editTags.isNotEmpty || editKv.isNotEmpty)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      editTags.clear();
+                      editKv.clear();
+                    });
+                  },
+                  child: const Text('Clear All'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (confirmed != true) return;
+    if (!context.mounted) return;
+
+    await app.categories!.setAutoTags(subcategoryId, editTags, editKv);
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(
+        editTags.isEmpty && editKv.isEmpty
+            ? 'Auto-tags cleared for "$subcategoryName"'
+            : 'Auto-tags saved: ${editTags.length} tags, ${editKv.length} custom tags',
+      )),
+    );
   }
 
   @override
@@ -285,7 +465,22 @@ class _CategoryCard extends StatelessWidget {
                 },
                 child: ListTile(
                   dense: true,
-                  title: Text(s.name),
+                  title: Row(
+                    children: [
+                      Expanded(child: Text(s.name)),
+                      // Show auto-tag indicator
+                      FutureBuilder<bool>(
+                        future: app.categories!.hasAutoTags(s.id),
+                        builder: (context, snapshot) {
+                          if (snapshot.data != true) return const SizedBox.shrink();
+                          return Tooltip(
+                            message: 'Auto-tags enabled — right-click to configure',
+                            child: Icon(Icons.auto_fix_high, size: 16, color: Theme.of(context).colorScheme.primary),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [

@@ -372,9 +372,6 @@ class _SearchScreenState extends State<SearchScreen> {
             selectedSimpleTags: _simpleSelected,
             selectedKeyValues: _kvSelected,
             onApply: () {
-              setState(() {
-                _showFilterPanel = false;
-              });
               _runSearch();
             },
             onClear: () {

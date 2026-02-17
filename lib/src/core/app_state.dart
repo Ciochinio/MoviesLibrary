@@ -151,6 +151,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ─── Reordering ──────────────────────────────
+
+  Future<void> reorderCategories(List<String> orderedIds) async {
+    await categories!.reorderCategories(orderedIds);
+    await refreshAll();
+  }
+
+  Future<void> reorderSubcategories(String categoryId, List<String> orderedIds) async {
+    await categories!.reorderSubcategories(orderedIds);
+    await refreshAll();
+  }
+
+  Future<void> reorderTags(List<String> orderedIds) async {
+    await tags!.reorderTags(orderedIds);
+    await refreshAll();
+  }
+
+  Future<void> reorderTagKeys(List<String> orderedIds) async {
+    await tags!.reorderTagKeys(orderedIds);
+    await refreshAll();
+  }
+
   Future<void> selectSubcategory(String categoryId, String subcategoryId) async {
   // Switching folders exits global search mode.
   globalSearchTagIds.clear();
@@ -370,6 +392,15 @@ void clearGlobalTagSearch() {
       precomputedSha256: hash,
       preexistingDuplicate: existing,
     );
+
+    // Apply auto-tags for the target subcategory
+    final actualSubId = res.duplicateOf != null && !addDuplicateAsSeparateFile
+        ? null  // not inserted
+        : (existing != null ? stashSubcategoryId! : targetSubcategoryId);
+    if (actualSubId != null) {
+      await applyAutoTagsToItem(res.item.id, actualSubId);
+    }
+
     notifyListeners();
     return (inserted: res.item, existingDuplicate: res.duplicateOf, sha256: hash);
   }
@@ -384,9 +415,30 @@ Future<String> _hashFile(File f) async {
     if (selectedItemIds.isEmpty) return;
     final list = await items!.listItemsByIds(selectedItemIds.toList());
     await items!.moveItemsToSubcategory(list, newSubcategoryId);
+    // Apply auto-tags for the destination subcategory
+    for (final item in list) {
+      await applyAutoTagsToItem(item.id, newSubcategoryId);
+    }
     await refreshFromDiskAndMigrate();
     clearItemSelection();
     await refreshAll();
+  }
+
+  /// Applies auto-tags configured for a subcategory to a single item.
+  Future<void> applyAutoTagsToItem(String itemId, String subcategoryId) async {
+    if (!isReady) return;
+    final autoTagIds = await categories!.getAutoTagIds(subcategoryId);
+    final autoKvIds = await categories!.getAutoKeyValueIds(subcategoryId);
+    if (autoTagIds.isEmpty && autoKvIds.isEmpty) return;
+
+    for (final tagId in autoTagIds) {
+      await items!.addTagToItem(itemId, tagId);
+    }
+    for (final kvId in autoKvIds) {
+      await items!.addKeyValueToItem(itemId, kvId);
+    }
+    // Update sidecar with new tags
+    await items!.writeSidecarForItemId(itemId);
   }
 
   Future<void> bulkAddTagToSelected(String tagId) async {

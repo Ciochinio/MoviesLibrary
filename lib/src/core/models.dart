@@ -2,7 +2,8 @@ class Category {
   final String id;
   final String name;
   final String description;
-  Category({required this.id, required this.name, this.description = ''});
+  final int sortOrder;
+  Category({required this.id, required this.name, this.description = '', this.sortOrder = 0});
 }
 
 class Subcategory {
@@ -10,7 +11,8 @@ class Subcategory {
   final String categoryId;
   final String name;
   final String description;
-  Subcategory({required this.id, required this.categoryId, required this.name, this.description = ''});
+  final int sortOrder;
+  Subcategory({required this.id, required this.categoryId, required this.name, this.description = '', this.sortOrder = 0});
 }
 
 enum ItemType { video, image, other }
@@ -45,7 +47,8 @@ class Tag {
   final String id;
   final String name;
   final String description;
-  Tag({required this.id, required this.name, this.description = ''});
+  final int sortOrder;
+  Tag({required this.id, required this.name, this.description = '', this.sortOrder = 0});
 }
 
 class TagKey {
@@ -68,12 +71,14 @@ class TagKeyValue {
   final String keyId;
   final String key;
   final String value;
+  final String description;
   final DateTime createdAt;
   TagKeyValue({
     required this.id,
     required this.keyId,
     required this.key,
     required this.value,
+    this.description = '',
     required this.createdAt,
   });
 }
