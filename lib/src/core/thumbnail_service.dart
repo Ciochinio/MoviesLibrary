@@ -34,6 +34,14 @@ class ThumbnailService {
     return Directory(p.join(exeDir.path, 'ffmpeg'));
   }
 
+  /// Public accessor for the bundled ffmpeg directory path (for settings UI).
+  static String get bundledDirPath => _bundledDir.path;
+
+  /// Get the currently resolved ffmpeg path (for settings UI).
+  static Future<String?> resolvedFfmpegPath() async {
+    return await _resolveFfmpeg();
+  }
+
   /// Safely list a directory recursively, returning empty if it doesn't exist.
   static Future<List<FileSystemEntity>> _safeListRecursive(Directory dir) async {
     if (!await dir.exists()) return [];

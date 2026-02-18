@@ -522,6 +522,12 @@ Future<void> setConfirmDelete(bool value) async {
   notifyListeners();
 }
 
+Future<void> setGifAutoplay(bool value) async {
+  settings = settings.copyWith(gifAutoplay: value);
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
   Future<({List<MediaItem> deleted, List<MediaItem> failed})> deleteOneItem(MediaItem item) async {
     final res = await items!.deleteItems([item]);
     await refreshFromDiskAndMigrate();

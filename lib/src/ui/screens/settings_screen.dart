@@ -1,65 +1,243 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/app_state.dart';
 import '../../core/app_settings.dart';
+import '../../core/thumbnail_service.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool? _ffmpegAvailable;
+  String? _ffmpegPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkFfmpeg();
+  }
+
+  Future<void> _checkFfmpeg() async {
+    final available = await ThumbnailService.isFfmpegAvailable();
+    final path = await ThumbnailService.resolvedFfmpegPath();
+    if (mounted) setState(() { _ffmpegAvailable = available; _ffmpegPath = path; });
+  }
+
+  Future<void> _downloadFfmpeg() async {
+    bool success = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        String statusText = 'Starting download...';
+        return StatefulBuilder(
+          builder: (ctx, setStateSB) {
+            if (statusText == 'Starting download...') {
+              Future.microtask(() async {
+                success = await ThumbnailService.downloadFfmpeg(
+                  onProgress: (status) { if (ctx.mounted) setStateSB(() => statusText = status); },
+                );
+                await Future.delayed(const Duration(milliseconds: 800));
+                if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+              });
+            }
+            return AlertDialog(
+              title: const Text('Downloading ffmpeg'),
+              content: SizedBox(height: 100, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                if (!statusText.startsWith('Done')) const CircularProgressIndicator(),
+                if (statusText.startsWith('Done')) const Icon(Icons.check_circle, color: Colors.green, size: 40),
+                const SizedBox(height: 12),
+                Text(statusText, textAlign: TextAlign.center),
+              ])),
+            );
+          },
+        );
+      },
+    );
+    await _checkFfmpeg();
+    if (mounted && success) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ffmpeg downloaded successfully!')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final lib = app.paths?.libraryDir.path ?? '(brak)';
+
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: ListView(
         children: [
           Text('Ustawienia', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 12),
-Card(
-  child: ListTile(
-    title: const Text('Tryb importu'),
-    subtitle: Text(app.settings.importMode == ImportMode.copy
-        ? 'Kopiuj do /Library/files'
-        : 'Przenieś do /Library/files'),
-    trailing: SegmentedButton<ImportMode>(
-      segments: const [
-        ButtonSegment(value: ImportMode.copy, label: Text('Kopiuj')),
-        ButtonSegment(value: ImportMode.move, label: Text('Przenieś')),
-      ],
-      selected: {app.settings.importMode},
-      onSelectionChanged: (s) {
-        context.read<AppState>().setImportMode(s.first);
-      },
-    ),
-  ),
-),
-const SizedBox(height: 12),
-Card(
-  child: SwitchListTile(
-    title: const Text('Pytaj przy usuwaniu'),
-    subtitle: const Text('Jeśli wyłączone, usuwanie będzie bez potwierdzenia.'),
-    value: app.settings.confirmDelete,
-    onChanged: (v) => context.read<AppState>().setConfirmDelete(v),
-  ),
-),
-const SizedBox(height: 12),
+
+          // ─── Import mode ───
+          Card(
+            child: ListTile(
+              title: const Text('Tryb importu'),
+              subtitle: Text(app.settings.importMode == ImportMode.copy
+                  ? 'Kopiuj do /Library/files'
+                  : 'Przenieś do /Library/files'),
+              trailing: SegmentedButton<ImportMode>(
+                segments: const [
+                  ButtonSegment(value: ImportMode.copy, label: Text('Kopiuj')),
+                  ButtonSegment(value: ImportMode.move, label: Text('Przenieś')),
+                ],
+                selected: {app.settings.importMode},
+                onSelectionChanged: (s) => context.read<AppState>().setImportMode(s.first),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── Confirm delete ───
+          Card(
+            child: SwitchListTile(
+              title: const Text('Pytaj przy usuwaniu'),
+              subtitle: const Text('Jeśli wyłączone, usuwanie będzie bez potwierdzenia.'),
+              value: app.settings.confirmDelete,
+              onChanged: (v) => context.read<AppState>().setConfirmDelete(v),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── GIF Autoplay ───
+          Card(
+            child: SwitchListTile(
+              title: const Text('GIF autoplay'),
+              subtitle: const Text('Enable animated GIF playback in the grid. Disable for better performance.'),
+              value: app.settings.gifAutoplay,
+              onChanged: (v) => context.read<AppState>().setGifAutoplay(v),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── Library path ───
           Card(
             child: ListTile(
               title: const Text('Ścieżka biblioteki (Library)'),
               subtitle: Text(lib),
               trailing: FilledButton.icon(
-                onPressed: () async {
-                  await context.read<AppState>().promptAndCreateOrOpenLibrary();
-                },
+                onPressed: () async => await context.read<AppState>().promptAndCreateOrOpenLibrary(),
                 icon: const Icon(Icons.folder_open),
                 label: const Text('Zmień'),
               ),
             ),
           ),
           const SizedBox(height: 12),
+
+          // ─── ffmpeg info ───
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text('ffmpeg', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(width: 12),
+                      if (_ffmpegAvailable == null)
+                        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      else if (_ffmpegAvailable == true)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(12)),
+                          child: const Text('Found', style: TextStyle(color: Colors.white, fontSize: 12)),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                          child: const Text('Not found', style: TextStyle(color: Colors.white, fontSize: 12)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Required for video/GIF thumbnail extraction.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  if (_ffmpegPath != null) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Location: $_ffmpegPath',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy, size: 16),
+                          tooltip: 'Copy path',
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: _ffmpegPath!));
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Path copied')));
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open, size: 16),
+                          tooltip: 'Open folder',
+                          onPressed: () async {
+                            final dir = Directory(_ffmpegPath!).parent.path;
+                            if (Platform.isWindows) {
+                              await Process.run('explorer', [dir]);
+                            } else if (Platform.isMacOS) {
+                              await Process.run('open', [dir]);
+                            } else {
+                              await Process.run('xdg-open', [dir]);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  if (_ffmpegAvailable != true && ThumbnailService.isAutoDownloadSupported) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Download location: ${ThumbnailService.bundledDirPath}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.icon(
+                      onPressed: _downloadFfmpeg,
+                      icon: const Icon(Icons.download),
+                      label: const Text('Download ffmpeg (~90MB)'),
+                    ),
+                  ],
+                  if (_ffmpegAvailable == true) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await _checkFfmpeg();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text(_ffmpegAvailable == true ? 'ffmpeg is working' : 'ffmpeg not found'),
+                          ));
+                        }
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Re-check'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
           const Text(
             'Portable tip:\n'
             '• Skopiuj build aplikacji do /App\n'

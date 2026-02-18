@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -123,42 +124,181 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _importFiles(List<File> files) async {
     final app = context.read<AppState>();
-    final messenger = ScaffoldMessenger.of(context);
-    int imported = 0, skipped = 0;
+    if (files.isEmpty) return;
 
-    for (final file in files) {
-      try {
-        final target = app.selectedSubcategoryId ?? app.stashSubcategoryId!;
-        final pre = await app.importSingleWithDuplicateDecision(source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: false);
+    int imported = 0, skipped = 0, failed = 0;
+    bool cancelAll = false;
+    int currentIndex = 0;
+    String currentFileName = '';
+    final stopwatch = Stopwatch()..start();
+    int totalBytesProcessed = 0;
+    // Track which files to skip (per-file cancel)
+    final skipIndices = <int>{};
 
-        if (pre.existingDuplicate != null && pre.inserted == null) {
-          if (!mounted) return;
-          final add = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('Duplikat wykryty'),
-              content: Text('Ten plik wygląda na duplikat istniejącego elementu:\n${pre.existingDuplicate!.originalName}\n\nCo chcesz zrobić?'),
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setStateSB) {
+            // Start import on first build
+            if (currentIndex == 0 && currentFileName.isEmpty) {
+              Future.microtask(() async {
+                for (int i = 0; i < files.length; i++) {
+                  if (cancelAll) break;
+                  if (skipIndices.contains(i)) { skipped++; continue; }
+
+                  final file = files[i];
+                  if (ctx.mounted) {
+                    setStateSB(() {
+                      currentIndex = i;
+                      currentFileName = p.basename(file.path);
+                    });
+                  }
+
+                  try {
+                    final fileSize = await file.length();
+                    final target = app.selectedSubcategoryId ?? app.stashSubcategoryId!;
+                    final pre = await app.importSingleWithDuplicateDecision(
+                      source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: false,
+                    );
+
+                    if (pre.existingDuplicate != null && pre.inserted == null) {
+                      // Duplicate — ask user (this pauses the queue)
+                      if (!ctx.mounted) break;
+                      final add = await showDialog<bool>(
+                        context: ctx,
+                        builder: (dCtx) => AlertDialog(
+                          title: const Text('Duplikat wykryty'),
+                          content: Text('${p.basename(file.path)} is a duplicate of:\n${pre.existingDuplicate!.originalName}'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Skip')),
+                            FilledButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Add to Stash anyway')),
+                          ],
+                        ),
+                      );
+                      if (add == true) {
+                        await app.importSingleWithDuplicateDecision(
+                          source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: true,
+                          precomputedSha256: pre.sha256, preexistingDuplicate: pre.existingDuplicate,
+                        );
+                        imported++;
+                      } else {
+                        skipped++;
+                      }
+                    } else {
+                      imported++;
+                    }
+                    totalBytesProcessed += fileSize;
+                  } catch (e) {
+                    failed++;
+                  }
+
+                  if (ctx.mounted) setStateSB(() {});
+                }
+
+                // Close dialog when done
+                if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+              });
+            }
+
+            final progress = files.isEmpty ? 0.0 : (currentIndex + 1) / files.length;
+            final elapsed = stopwatch.elapsedMilliseconds / 1000.0;
+            final speedMBs = elapsed > 0 ? (totalBytesProcessed / 1024 / 1024) / elapsed : 0.0;
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Text('Importing files'),
+                  const Spacer(),
+                  Text('${currentIndex + 1}/${files.length}', style: Theme.of(ctx).textTheme.bodyMedium),
+                ],
+              ),
+              content: SizedBox(
+                width: 500,
+                height: 350,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Progress bar
+                    LinearProgressIndicator(value: progress),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(child: Text(currentFileName, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold))),
+                        Text('${speedMBs.toStringAsFixed(1)} MB/s', style: Theme.of(ctx).textTheme.bodySmall),
+                      ],
+                    ),
+                    Text('$imported imported, $skipped skipped, $failed failed',
+                      style: Theme.of(ctx).textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const SizedBox(height: 4),
+                    Text('Queue:', style: Theme.of(ctx).textTheme.titleSmall),
+                    const SizedBox(height: 4),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: files.length,
+                        itemBuilder: (_, i) {
+                          final name = p.basename(files[i].path);
+                          final isDone = i < currentIndex || (i == currentIndex && cancelAll);
+                          final isCurrent = i == currentIndex && !cancelAll;
+                          final isSkipped = skipIndices.contains(i);
+                          final isPending = i > currentIndex && !isSkipped;
+
+                          IconData icon;
+                          Color color;
+                          if (isSkipped) { icon = Icons.skip_next; color = Colors.grey; }
+                          else if (isDone) { icon = Icons.check_circle; color = Colors.green; }
+                          else if (isCurrent) { icon = Icons.downloading; color = Theme.of(ctx).colorScheme.primary; }
+                          else { icon = Icons.schedule; color = Colors.grey; }
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 1),
+                            child: Row(
+                              children: [
+                                Icon(icon, size: 16, color: color),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(name, overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 12, color: isSkipped ? Colors.grey : null))),
+                                if (isPending)
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 14),
+                                    tooltip: 'Skip this file',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(maxWidth: 24, maxHeight: 24),
+                                    onPressed: () => setStateSB(() => skipIndices.add(i)),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Nie dodawaj')),
-                FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Dodaj jako osobny do Stash')),
+                TextButton(
+                  onPressed: () {
+                    cancelAll = true;
+                    if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+                  },
+                  child: const Text('Cancel All'),
+                ),
               ],
-            ),
-          );
-          if (add == true) {
-            await app.importSingleWithDuplicateDecision(source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: true, precomputedSha256: pre.sha256, preexistingDuplicate: pre.existingDuplicate);
-            imported++;
-          } else {
-            skipped++;
-          }
-        } else {
-          imported++;
-        }
-      } catch (e) {
-        messenger.showSnackBar(SnackBar(content: Text('Błąd importu: $e')));
-      }
-    }
-    if (imported > 0 || skipped > 0) {
-      messenger.showSnackBar(SnackBar(content: Text('Zaimportowano $imported plików${skipped > 0 ? ', pominięto $skipped duplikatów' : ''}')));
+            );
+          },
+        );
+      },
+    );
+
+    stopwatch.stop();
+
+    if (mounted && (imported > 0 || skipped > 0 || failed > 0)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Done: $imported imported, $skipped skipped${failed > 0 ? ', $failed failed' : ''}'),
+      ));
     }
     await _reload();
   }
@@ -388,18 +528,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _showThumbnailPicker(MediaItem item) async {
     final app = context.read<AppState>();
     final thumbService = ThumbnailService(app.paths!.thumbsDir);
+    final filePath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
 
     // Check ffmpeg availability
     final hasFfmpeg = await ThumbnailService.isFfmpegAvailable();
     if (!hasFfmpeg) {
       if (!mounted) return;
-      // Offer to download
       final shouldDownload = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('ffmpeg required'),
           content: Text(
-            'Video thumbnails require ffmpeg, which was not found.\n\n'
+            'Thumbnails require ffmpeg, which was not found.\n\n'
             '${ThumbnailService.isAutoDownloadSupported
                 ? 'Would you like to download it automatically? (~90MB, one-time download)\n\nIt will be stored next to the app for portable use.'
                 : 'Please install ffmpeg manually:\n  Linux: sudo apt install ffmpeg\n  Or download from ffmpeg.org'}'
@@ -414,7 +554,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
       if (shouldDownload != true || !mounted) return;
 
-      // Show download progress dialog
       bool downloadSuccess = false;
       await showDialog<void>(
         context: context,
@@ -423,67 +562,44 @@ class _LibraryScreenState extends State<LibraryScreen> {
           String statusText = 'Starting download...';
           return StatefulBuilder(
             builder: (ctx, setStateSB) {
-              // Start download on first build
               if (statusText == 'Starting download...') {
                 Future.microtask(() async {
                   downloadSuccess = await ThumbnailService.downloadFfmpeg(
-                    onProgress: (status) {
-                      if (ctx.mounted) setStateSB(() => statusText = status);
-                    },
+                    onProgress: (status) { if (ctx.mounted) setStateSB(() => statusText = status); },
                   );
-                  // Small delay so user can see "Done!" message
                   await Future.delayed(const Duration(milliseconds: 800));
                   if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
                 });
               }
               return AlertDialog(
                 title: const Text('Downloading ffmpeg'),
-                content: SizedBox(
-                  height: 100,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (!statusText.startsWith('Done'))
-                        const CircularProgressIndicator(),
-                      if (statusText.startsWith('Done'))
-                        const Icon(Icons.check_circle, color: Colors.green, size: 40),
-                      const SizedBox(height: 12),
-                      Text(statusText, textAlign: TextAlign.center),
-                    ],
-                  ),
-                ),
+                content: SizedBox(height: 100, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  if (!statusText.startsWith('Done')) const CircularProgressIndicator(),
+                  if (statusText.startsWith('Done')) const Icon(Icons.check_circle, color: Colors.green, size: 40),
+                  const SizedBox(height: 12),
+                  Text(statusText, textAlign: TextAlign.center),
+                ])),
               );
             },
           );
         },
       );
 
-      if (!downloadSuccess) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ffmpeg download failed. You can install it manually and add it to your PATH.')),
-        );
+      if (!downloadSuccess || !mounted) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ffmpeg download failed.')));
         return;
       }
-
-      // Verify it works now
-      final nowAvailable = await ThumbnailService.isFfmpegAvailable();
-      if (!nowAvailable) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ffmpeg was downloaded but could not be executed. Check your antivirus settings.')),
-        );
+      if (!await ThumbnailService.isFfmpegAvailable()) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ffmpeg could not be executed. Check antivirus settings.')));
         return;
       }
     }
 
-    // ─── Extract frames and show picker ───
-    final videoPath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
+    // ─── Extract frames and show picker (works for both video AND GIF) ───
     if (!mounted) return;
 
-    // Use unique temp dir each time so Flutter image cache doesn't serve stale frames
     final sessionId = DateTime.now().millisecondsSinceEpoch;
-    final tempDir = Directory(p.join(app.paths!.thumbsDir.path, '_temp_${item.id}_$sessionId'));
+    final tempDir = Directory(p.join(Directory.systemTemp.path, 'libthumb_${item.id}_$sessionId'));
     await tempDir.create(recursive: true);
 
     List<String>? framePaths;
@@ -493,7 +609,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       barrierDismissible: false,
       builder: (ctx) {
         Future.microtask(() async {
-          framePaths = await thumbService.extract9Frames(videoPath: videoPath, tempDir: tempDir.path);
+          framePaths = await thumbService.extract9Frames(videoPath: filePath, tempDir: tempDir.path);
           if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
         });
         return const AlertDialog(
@@ -505,7 +621,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (framePaths == null || framePaths!.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not extract frames from this video.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not extract frames.')));
       _cleanupTempDir(tempDir);
       return;
     }
@@ -527,54 +643,54 @@ class _LibraryScreenState extends State<LibraryScreen> {
               Expanded(
                 child: GridView.builder(
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                    childAspectRatio: 16 / 9,
+                    crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8, childAspectRatio: 16 / 9,
                   ),
                   itemCount: framePaths!.length,
-                  itemBuilder: (_, i) {
-                    return InkWell(
-                      onTap: () => Navigator.pop(ctx, framePaths![i]),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.file(
-                          File(framePaths![i]),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image)),
-                        ),
-                      ),
-                    );
-                  },
+                  itemBuilder: (_, i) => InkWell(
+                    onTap: () => Navigator.pop(ctx, framePaths![i]),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(File(framePaths![i]), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image))),
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, '__refresh__'),
-            child: const Text('Refresh frames'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, '__pick_file__'), child: const Text('Pick from file...')),
+          TextButton(onPressed: () => Navigator.pop(ctx, '__refresh__'), child: const Text('Refresh frames')),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
         ],
       ),
     );
 
-    if (chosen == '__refresh__') {
-      _cleanupTempDir(tempDir);
-      await _showThumbnailPicker(item);
-      return;
-    }
+    if (chosen == '__refresh__') { _cleanupTempDir(tempDir); await _showThumbnailPicker(item); return; }
+    if (chosen == '__pick_file__') { _cleanupTempDir(tempDir); await _pickThumbnailFromFile(item, thumbService); return; }
 
     if (chosen != null) {
       final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: chosen);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
-      setState(() {}); // Refresh grid
+      setState(() {});
     }
 
     _cleanupTempDir(tempDir);
+  }
+
+  /// Pick an image file and set it as thumbnail.
+  Future<void> _pickThumbnailFromFile(MediaItem item, ThumbnailService thumbService) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'],
+      dialogTitle: 'Pick thumbnail image',
+    );
+    if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+    final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: result.files.first.path!);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
+    setState(() {});
   }
 
   void _cleanupTempDir(Directory dir) {
@@ -583,13 +699,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   void _handleContextMenu(BuildContext gridContext, MediaItem item, Offset globalPosition) {
     final isVideo = item.type == ItemType.video;
+    final filePath = LibraryFolders.absPath(context.read<AppState>().paths!.filesDir, item.storedRelPath);
+    final isGif = item.type == ItemType.image && p.extension(filePath).toLowerCase() == '.gif';
+    final showThumbOption = isVideo || isGif;
     showMenu<String>(
       context: gridContext,
       position: RelativeRect.fromLTRB(globalPosition.dx, globalPosition.dy, globalPosition.dx, globalPosition.dy),
       items: [
         const PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit, size: 20), SizedBox(width: 12), Text('Zmień nazwę...')])),
         const PopupMenuItem(value: 'tags', child: Row(children: [Icon(Icons.sell, size: 20), SizedBox(width: 12), Text('Tagi...')])),
-        if (isVideo)
+        if (showThumbOption)
           const PopupMenuItem(value: 'thumbnail', child: Row(children: [Icon(Icons.photo_camera, size: 20), SizedBox(width: 12), Text('Set Thumbnail...')])),
         const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move, size: 20), SizedBox(width: 12), Text('Przenieś do...')])),
         const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Eksportuj...')])),
@@ -711,6 +830,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               thumbsDir: app.paths!.thumbsDir,
                               selectedItemId: selectedItem?.id,
                               selectedIds: app.selectedItemIds,
+                              gifAutoplay: app.settings.gifAutoplay,
                               onSelect: (item) => setState(() => selectedItem = item),
                               onToggleBulk: (id) => app.toggleItemSelection(id),
                               onContextMenu: (gridCtx, item, pos) => _handleContextMenu(gridCtx, item, pos),
@@ -965,6 +1085,7 @@ class _ItemsGrid extends StatelessWidget {
   final Directory thumbsDir;
   final String? selectedItemId;
   final Set<String> selectedIds;
+  final bool _gifAutoplay;
   final void Function(MediaItem item) onSelect;
   final void Function(String id) onToggleBulk;
   final void Function(BuildContext ctx, MediaItem item, Offset globalPosition) onContextMenu;
@@ -975,10 +1096,11 @@ class _ItemsGrid extends StatelessWidget {
     required this.thumbsDir,
     required this.selectedItemId,
     required this.selectedIds,
+    required bool gifAutoplay,
     required this.onSelect,
     required this.onToggleBulk,
     required this.onContextMenu,
-  });
+  }) : _gifAutoplay = gifAutoplay;
 
   bool _isGif(String filePath) => p.extension(filePath).toLowerCase() == '.gif';
 
@@ -1001,29 +1123,35 @@ class _ItemsGrid extends StatelessWidget {
         final isSelected = it.id == selectedItemId;
         final isBulk = selectedIds.contains(it.id);
 
-        // Check for custom thumbnail (videos)
+        // Check for custom thumbnail (videos and GIFs)
         final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
         final hasThumb = thumbFile.existsSync();
+        final isGif = _isGif(filePath);
+        // Show "no thumbnail" indicator for videos and GIFs without custom thumbnail
+        final needsThumbIndicator = (it.type == ItemType.video || isGif) && !hasThumb;
 
         Widget thumb;
         if (hasThumb) {
-          // Custom thumbnail (set by user for videos)
+          // Custom thumbnail (set by user for videos or GIFs)
           thumb = ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: Image.file(thumbFile, fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48)),
           );
         } else if (it.type == ItemType.image) {
-          if (_isGif(filePath)) {
-            // GIF: show as static first frame only (no animation in grid)
-            // ResizeImage forces decode of a single frame at the target width
-            thumb = ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image(
-                image: ResizeImage(FileImage(File(filePath)), width: 320),
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48),
-              ),
-            );
+          if (isGif) {
+            if (_gifAutoplay) {
+              // GIF autoplay enabled — show animated
+              thumb = ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+              );
+            } else {
+              // GIF: show only the first frame (no animation)
+              thumb = ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: _StaticGifImage(filePath: filePath, fit: BoxFit.cover),
+              );
+            }
           } else {
             // Static image
             thumb = ClipRRect(
@@ -1089,6 +1217,31 @@ class _ItemsGrid extends StatelessWidget {
                           ]),
                         ),
                       ),
+                    // GIF badge for thumbnailed GIFs
+                    if (isGif && hasThumb)
+                      Positioned(
+                        right: 8, bottom: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
+                          child: const Text('GIF', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    // "!" indicator for videos/GIFs without thumbnails
+                    if (needsThumbIndicator)
+                      Positioned(
+                        left: 8, bottom: 8,
+                        child: Container(
+                          width: 22, height: 22,
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.9),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Center(
+                            child: Text('!', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ),
                     if (it.isDuplicate)
                       Positioned(
                         right: 8, top: 8,
@@ -1111,6 +1264,79 @@ class _ItemsGrid extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+// ──────────────────────────────────────────────
+// Static GIF: renders only the first frame
+// ──────────────────────────────────────────────
+class _StaticGifImage extends StatefulWidget {
+  final String filePath;
+  final BoxFit fit;
+
+  const _StaticGifImage({required this.filePath, this.fit = BoxFit.cover});
+
+  @override
+  State<_StaticGifImage> createState() => _StaticGifImageState();
+}
+
+class _StaticGifImageState extends State<_StaticGifImage> {
+  ui.Image? _frame;
+  bool _failed = false;
+
+  // Global cache so we don't re-decode the same GIF every rebuild
+  static final Map<String, ui.Image> _cache = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFirstFrame();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StaticGifImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.filePath != widget.filePath) {
+      _frame = null;
+      _failed = false;
+      _loadFirstFrame();
+    }
+  }
+
+  Future<void> _loadFirstFrame() async {
+    // Check cache first
+    final cached = _cache[widget.filePath];
+    if (cached != null) {
+      if (mounted) setState(() => _frame = cached);
+      return;
+    }
+
+    try {
+      final bytes = await File(widget.filePath).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 320);
+      final frameInfo = await codec.getNextFrame();
+      final image = frameInfo.image;
+      codec.dispose();
+
+      _cache[widget.filePath] = image;
+
+      if (mounted) setState(() => _frame = image);
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) return const Center(child: Icon(Icons.image_not_supported, size: 48));
+    if (_frame == null) return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)));
+
+    return RawImage(
+      image: _frame,
+      fit: widget.fit,
+      width: double.infinity,
+      height: double.infinity,
     );
   }
 }

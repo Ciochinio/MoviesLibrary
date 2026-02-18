@@ -6,22 +6,26 @@ enum ImportMode { copy, move }
 class AppSettings {
   final ImportMode importMode;
   final bool confirmDelete;
+  final bool gifAutoplay;
 
   const AppSettings({
     required this.importMode,
     required this.confirmDelete,
+    required this.gifAutoplay,
   });
 
-  AppSettings copyWith({ImportMode? importMode, bool? confirmDelete}) {
+  AppSettings copyWith({ImportMode? importMode, bool? confirmDelete, bool? gifAutoplay}) {
     return AppSettings(
       importMode: importMode ?? this.importMode,
       confirmDelete: confirmDelete ?? this.confirmDelete,
+      gifAutoplay: gifAutoplay ?? this.gifAutoplay,
     );
   }
 
   Map<String, Object?> toJson() => {
         'importMode': importMode.name,
         'confirmDelete': confirmDelete,
+        'gifAutoplay': gifAutoplay,
       };
 
   static AppSettings fromJson(Map<String, Object?> json) {
@@ -31,10 +35,11 @@ class AppSettings {
       orElse: () => ImportMode.copy,
     );
     final confirm = (json['confirmDelete'] as bool?) ?? true;
-    return AppSettings(importMode: mode, confirmDelete: confirm);
+    final gifAuto = (json['gifAutoplay'] as bool?) ?? false;
+    return AppSettings(importMode: mode, confirmDelete: confirm, gifAutoplay: gifAuto);
   }
 
-  static const defaults = AppSettings(importMode: ImportMode.copy, confirmDelete: true);
+  static const defaults = AppSettings(importMode: ImportMode.copy, confirmDelete: true, gifAutoplay: false);
 
   static Future<AppSettings> load(File settingsFile) async {
     if (!await settingsFile.exists()) return defaults;
