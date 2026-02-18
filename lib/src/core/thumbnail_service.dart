@@ -4,14 +4,17 @@ import 'dart:math';
 import 'package:path/path.dart' as p;
 
 /// URLs for auto-downloading ffmpeg essentials builds.
-/// Using gyan.dev release builds (widely trusted, official Windows builds).
 const _ffmpegDownloadUrlWindows =
     'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
+const _ffmpegDownloadUrlMacOS =
+    'https://evermeet.cx/ffmpeg/getrelease/zip';
+const _ffprobeDownloadUrlMacOS =
+    'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip';
 
 /// Service for extracting video thumbnails using ffmpeg.
 ///
 /// Ffmpeg resolution order:
-/// 1. Bundled: `<exe_dir>/ffmpeg/ffmpeg.exe` (portable)
+/// 1. Bundled: `<exe_dir>/ffmpeg/ffmpeg[.exe]` (portable)
 /// 2. System PATH
 ///
 /// If neither is found, [downloadFfmpeg] can fetch it automatically.
@@ -22,7 +25,6 @@ class ThumbnailService {
 
   // ─── Ffmpeg location resolution ────────────
 
-  /// Cached resolved paths (null = not yet resolved).
   static String? _resolvedFfmpeg;
   static String? _resolvedFfprobe;
 
@@ -32,30 +34,49 @@ class ThumbnailService {
     return Directory(p.join(exeDir.path, 'ffmpeg'));
   }
 
+  /// Safely list a directory recursively, returning empty if it doesn't exist.
+  static Future<List<FileSystemEntity>> _safeListRecursive(Directory dir) async {
+    if (!await dir.exists()) return [];
+    final result = <FileSystemEntity>[];
+    await for (final entity in dir.list(recursive: true)) {
+      result.add(entity);
+    }
+    return result;
+  }
+
   /// Resolve the ffmpeg binary path. Checks bundled first, then PATH.
   static Future<String?> _resolveFfmpeg() async {
-    if (_resolvedFfmpeg != null) return _resolvedFfmpeg;
-
-    // 1. Check bundled location
-    final bundled = _bundledDir;
-    if (Platform.isWindows) {
-      final exe = File(p.join(bundled.path, 'ffmpeg.exe'));
-      if (await exe.exists()) {
-        _resolvedFfmpeg = exe.path;
-        return _resolvedFfmpeg;
+    if (_resolvedFfmpeg != null) {
+      // Verify cached path still works
+      try {
+        final f = File(_resolvedFfmpeg!);
+        if (_resolvedFfmpeg != 'ffmpeg' && !await f.exists()) {
+          _resolvedFfmpeg = null;
+        }
+      } catch (_) {
+        _resolvedFfmpeg = null;
       }
-      // Also check one level deeper (zip often extracts as ffmpeg-N.N-essentials/bin/)
-      await for (final entity in bundled.list(recursive: true)) {
-        if (entity is File && p.basename(entity.path).toLowerCase() == 'ffmpeg.exe') {
+      if (_resolvedFfmpeg != null) return _resolvedFfmpeg;
+    }
+
+    final exeName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+
+    // 1. Check bundled location — direct path first
+    final bundled = _bundledDir;
+    final directExe = File(p.join(bundled.path, exeName));
+    if (await directExe.exists()) {
+      _resolvedFfmpeg = directExe.path;
+      return _resolvedFfmpeg;
+    }
+
+    // Check one level deeper (zip often extracts as a subfolder)
+    if (await bundled.exists()) {
+      final entities = await _safeListRecursive(bundled);
+      for (final entity in entities) {
+        if (entity is File && p.basename(entity.path).toLowerCase() == exeName.toLowerCase()) {
           _resolvedFfmpeg = entity.path;
           return _resolvedFfmpeg;
         }
-      }
-    } else {
-      final exe = File(p.join(bundled.path, 'ffmpeg'));
-      if (await exe.exists()) {
-        _resolvedFfmpeg = exe.path;
-        return _resolvedFfmpeg;
       }
     }
 
@@ -68,7 +89,7 @@ class ThumbnailService {
       if (result.exitCode == 0) {
         final path = (result.stdout as String).trim().split('\n').first.trim();
         if (path.isNotEmpty) {
-          _resolvedFfmpeg = 'ffmpeg'; // Just use the name, it's on PATH
+          _resolvedFfmpeg = 'ffmpeg';
           return _resolvedFfmpeg;
         }
       }
@@ -79,27 +100,36 @@ class ThumbnailService {
 
   /// Resolve the ffprobe binary path.
   static Future<String?> _resolveFfprobe() async {
-    if (_resolvedFfprobe != null) return _resolvedFfprobe;
-
-    // 1. Bundled
-    final bundled = _bundledDir;
-    if (Platform.isWindows) {
-      final exe = File(p.join(bundled.path, 'ffprobe.exe'));
-      if (await exe.exists()) {
-        _resolvedFfprobe = exe.path;
-        return _resolvedFfprobe;
+    if (_resolvedFfprobe != null) {
+      try {
+        final f = File(_resolvedFfprobe!);
+        if (_resolvedFfprobe != 'ffprobe' && !await f.exists()) {
+          _resolvedFfprobe = null;
+        }
+      } catch (_) {
+        _resolvedFfprobe = null;
       }
-      await for (final entity in bundled.list(recursive: true)) {
-        if (entity is File && p.basename(entity.path).toLowerCase() == 'ffprobe.exe') {
+      if (_resolvedFfprobe != null) return _resolvedFfprobe;
+    }
+
+    final exeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
+
+    // 1. Bundled — direct path
+    final bundled = _bundledDir;
+    final directExe = File(p.join(bundled.path, exeName));
+    if (await directExe.exists()) {
+      _resolvedFfprobe = directExe.path;
+      return _resolvedFfprobe;
+    }
+
+    // Check deeper
+    if (await bundled.exists()) {
+      final entities = await _safeListRecursive(bundled);
+      for (final entity in entities) {
+        if (entity is File && p.basename(entity.path).toLowerCase() == exeName.toLowerCase()) {
           _resolvedFfprobe = entity.path;
           return _resolvedFfprobe;
         }
-      }
-    } else {
-      final exe = File(p.join(bundled.path, 'ffprobe'));
-      if (await exe.exists()) {
-        _resolvedFfprobe = exe.path;
-        return _resolvedFfprobe;
       }
     }
 
@@ -126,25 +156,36 @@ class ThumbnailService {
       final result = await Process.run(ff, ['-version']);
       return result.exitCode == 0;
     } catch (_) {
-      // Reset cache if execution fails
       _resolvedFfmpeg = null;
       return false;
     }
   }
 
+  /// Returns true if auto-download is supported on this platform.
+  static bool get isAutoDownloadSupported =>
+      Platform.isWindows || Platform.isMacOS;
+
   // ─── Auto-download ─────────────────────────
 
-  /// Download ffmpeg essentials and extract to the bundled directory.
+  /// Download ffmpeg and extract to the bundled directory.
   /// [onProgress] is called with a status message for UI updates.
   /// Returns true if successful.
   static Future<bool> downloadFfmpeg({
     void Function(String status)? onProgress,
   }) async {
-    if (!Platform.isWindows) {
-      onProgress?.call('Auto-download is only supported on Windows.\nPlease install ffmpeg manually.');
+    if (Platform.isWindows) {
+      return _downloadFfmpegWindows(onProgress: onProgress);
+    } else if (Platform.isMacOS) {
+      return _downloadFfmpegMacOS(onProgress: onProgress);
+    } else {
+      onProgress?.call('Auto-download is not supported on this platform.\nPlease install ffmpeg manually (e.g. sudo apt install ffmpeg).');
       return false;
     }
+  }
 
+  static Future<bool> _downloadFfmpegWindows({
+    void Function(String status)? onProgress,
+  }) async {
     final bundled = _bundledDir;
     final zipPath = p.join(bundled.path, '_ffmpeg_download.zip');
 
@@ -152,7 +193,7 @@ class ThumbnailService {
       await bundled.create(recursive: true);
 
       // 1. Download
-      onProgress?.call('Downloading ffmpeg (~90MB)...');
+      onProgress?.call('Downloading ffmpeg (~90MB)...\nThis may take a few minutes.');
       final result = await Process.run('powershell', [
         '-NoProfile',
         '-Command',
@@ -163,8 +204,7 @@ class ThumbnailService {
         return false;
       }
 
-      final zipFile = File(zipPath);
-      if (!await zipFile.exists()) {
+      if (!File(zipPath).existsSync()) {
         onProgress?.call('Download failed: file not created.');
         return false;
       }
@@ -181,10 +221,10 @@ class ThumbnailService {
         return false;
       }
 
-      // 3. Find the bin folder and move ffmpeg.exe + ffprobe.exe to bundled root
-      // The zip typically extracts as ffmpeg-N.N.N-essentials_build/bin/ffmpeg.exe
+      // 3. Find ffmpeg.exe and ffprobe.exe and copy to bundled root
       onProgress?.call('Setting up...');
-      await for (final entity in bundled.list(recursive: true)) {
+      final entities = await _safeListRecursive(bundled);
+      for (final entity in entities) {
         if (entity is File) {
           final name = p.basename(entity.path).toLowerCase();
           if (name == 'ffmpeg.exe' || name == 'ffprobe.exe') {
@@ -197,23 +237,96 @@ class ThumbnailService {
       }
 
       // 4. Verify
-      final ffmpegExe = File(p.join(bundled.path, 'ffmpeg.exe'));
-      final ffprobeExe = File(p.join(bundled.path, 'ffprobe.exe'));
-      if (!await ffmpegExe.exists() || !await ffprobeExe.exists()) {
+      if (!File(p.join(bundled.path, 'ffmpeg.exe')).existsSync() ||
+          !File(p.join(bundled.path, 'ffprobe.exe')).existsSync()) {
         onProgress?.call('Setup failed: binaries not found after extraction.');
         return false;
       }
 
-      // 5. Clean up zip and extracted subfolder
-      try { await zipFile.delete(); } catch (_) {}
-      // Clean up extracted subfolder (keep only the .exe files at root)
-      await for (final entity in bundled.list()) {
+      // 5. Clean up
+      try { await File(zipPath).delete(); } catch (_) {}
+      final dirEntities = await _safeListRecursive(bundled);
+      // Remove extracted subfolders (keep only .exe at root)
+      for (final entity in await bundled.list().toList()) {
         if (entity is Directory) {
           try { await entity.delete(recursive: true); } catch (_) {}
         }
       }
 
-      // 6. Reset cache so next call finds the new binaries
+      _resolvedFfmpeg = null;
+      _resolvedFfprobe = null;
+
+      onProgress?.call('Done! ffmpeg is ready.');
+      return true;
+    } catch (e) {
+      onProgress?.call('Error: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> _downloadFfmpegMacOS({
+    void Function(String status)? onProgress,
+  }) async {
+    final bundled = _bundledDir;
+
+    try {
+      await bundled.create(recursive: true);
+
+      // 1. Download ffmpeg
+      onProgress?.call('Downloading ffmpeg...');
+      final ffmpegZip = p.join(bundled.path, '_ffmpeg.zip');
+      var result = await Process.run('curl', [
+        '-L', '-o', ffmpegZip, _ffmpegDownloadUrlMacOS,
+      ]);
+      if (result.exitCode != 0) {
+        onProgress?.call('Download failed: ${result.stderr}');
+        return false;
+      }
+
+      // 2. Download ffprobe
+      onProgress?.call('Downloading ffprobe...');
+      final ffprobeZip = p.join(bundled.path, '_ffprobe.zip');
+      result = await Process.run('curl', [
+        '-L', '-o', ffprobeZip, _ffprobeDownloadUrlMacOS,
+      ]);
+      if (result.exitCode != 0) {
+        onProgress?.call('ffprobe download failed: ${result.stderr}');
+        return false;
+      }
+
+      // 3. Extract
+      onProgress?.call('Extracting...');
+      result = await Process.run('unzip', ['-o', ffmpegZip, '-d', bundled.path]);
+      if (result.exitCode != 0) {
+        onProgress?.call('Extract failed: ${result.stderr}');
+        return false;
+      }
+      result = await Process.run('unzip', ['-o', ffprobeZip, '-d', bundled.path]);
+      if (result.exitCode != 0) {
+        onProgress?.call('Extract ffprobe failed: ${result.stderr}');
+        return false;
+      }
+
+      // 4. Make executable
+      final ffmpegBin = File(p.join(bundled.path, 'ffmpeg'));
+      final ffprobeBin = File(p.join(bundled.path, 'ffprobe'));
+      if (await ffmpegBin.exists()) {
+        await Process.run('chmod', ['+x', ffmpegBin.path]);
+      }
+      if (await ffprobeBin.exists()) {
+        await Process.run('chmod', ['+x', ffprobeBin.path]);
+      }
+
+      // 5. Verify
+      if (!await ffmpegBin.exists()) {
+        onProgress?.call('Setup failed: ffmpeg binary not found.');
+        return false;
+      }
+
+      // 6. Clean up zips
+      try { await File(ffmpegZip).delete(); } catch (_) {}
+      try { await File(ffprobeZip).delete(); } catch (_) {}
+
       _resolvedFfmpeg = null;
       _resolvedFfprobe = null;
 

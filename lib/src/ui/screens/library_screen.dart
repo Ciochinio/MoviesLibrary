@@ -398,14 +398,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('ffmpeg required'),
-          content: const Text(
+          content: Text(
             'Video thumbnails require ffmpeg, which was not found.\n\n'
-            'Would you like to download it automatically? (~90MB, one-time download)\n\n'
-            'It will be stored next to the app for portable use.',
+            '${ThumbnailService.isAutoDownloadSupported
+                ? 'Would you like to download it automatically? (~90MB, one-time download)\n\nIt will be stored next to the app for portable use.'
+                : 'Please install ffmpeg manually:\n  Linux: sudo apt install ffmpeg\n  Or download from ffmpeg.org'}'
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Download ffmpeg')),
+            if (ThumbnailService.isAutoDownloadSupported)
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Download ffmpeg')),
           ],
         ),
       );
@@ -479,7 +481,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final videoPath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
     if (!mounted) return;
 
-    final tempDir = Directory(p.join(app.paths!.thumbsDir.path, '_temp_${item.id}'));
+    // Use unique temp dir each time so Flutter image cache doesn't serve stale frames
+    final sessionId = DateTime.now().millisecondsSinceEpoch;
+    final tempDir = Directory(p.join(app.paths!.thumbsDir.path, '_temp_${item.id}_$sessionId'));
     await tempDir.create(recursive: true);
 
     List<String>? framePaths;
