@@ -128,9 +128,6 @@ class _SinglePickKeyValues extends StatelessWidget {
         for (final v in values)
           FilterChip(
             label: Text(v.value),
-            tooltip: v.description.isNotEmpty
-                ? '${v.key}: ${v.value}\n${v.description}'
-                : '${v.key}: ${v.value}',
             selected: kvSelected.contains(v.id),
             onSelected: (sel) {
               if (sel) {

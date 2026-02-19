@@ -12,6 +12,7 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../core/library_folders.dart';
 import '../../core/thumbnail_service.dart';
+import '../../core/import_controller.dart';
 
 import '../widgets/tag_manager_dialog.dart';
 
@@ -123,184 +124,33 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _importFiles(List<File> files) async {
-    final app = context.read<AppState>();
     if (files.isEmpty) return;
+    final ctrl = context.read<ImportController>();
 
-    int imported = 0, skipped = 0, failed = 0;
-    bool cancelAll = false;
-    int currentIndex = 0;
-    String currentFileName = '';
-    final stopwatch = Stopwatch()..start();
-    int totalBytesProcessed = 0;
-    // Track which files to skip (per-file cancel)
-    final skipIndices = <int>{};
+    // Set up duplicate handler
+    ctrl.onDuplicateDetected = (file, existingName) async {
+      if (!mounted) return false;
+      final add = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Duplikat wykryty'),
+          content: Text('${p.basename(file.path)} is a duplicate of:\n$existingName'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Skip')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add to Stash anyway')),
+          ],
+        ),
+      );
+      return add ?? false;
+    };
 
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setStateSB) {
-            // Start import on first build
-            if (currentIndex == 0 && currentFileName.isEmpty) {
-              Future.microtask(() async {
-                for (int i = 0; i < files.length; i++) {
-                  if (cancelAll) break;
-                  if (skipIndices.contains(i)) { skipped++; continue; }
+    // Set up completion handler
+    ctrl.onImportComplete = () {
+      if (mounted) _reload();
+    };
 
-                  final file = files[i];
-                  if (ctx.mounted) {
-                    setStateSB(() {
-                      currentIndex = i;
-                      currentFileName = p.basename(file.path);
-                    });
-                  }
-
-                  try {
-                    final fileSize = await file.length();
-                    final target = app.selectedSubcategoryId ?? app.stashSubcategoryId!;
-                    final pre = await app.importSingleWithDuplicateDecision(
-                      source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: false,
-                    );
-
-                    if (pre.existingDuplicate != null && pre.inserted == null) {
-                      // Duplicate — ask user (this pauses the queue)
-                      if (!ctx.mounted) break;
-                      final add = await showDialog<bool>(
-                        context: ctx,
-                        builder: (dCtx) => AlertDialog(
-                          title: const Text('Duplikat wykryty'),
-                          content: Text('${p.basename(file.path)} is a duplicate of:\n${pre.existingDuplicate!.originalName}'),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Skip')),
-                            FilledButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Add to Stash anyway')),
-                          ],
-                        ),
-                      );
-                      if (add == true) {
-                        await app.importSingleWithDuplicateDecision(
-                          source: file, targetSubcategoryId: target, addDuplicateAsSeparateFile: true,
-                          precomputedSha256: pre.sha256, preexistingDuplicate: pre.existingDuplicate,
-                        );
-                        imported++;
-                      } else {
-                        skipped++;
-                      }
-                    } else {
-                      imported++;
-                    }
-                    totalBytesProcessed += fileSize;
-                  } catch (e) {
-                    failed++;
-                  }
-
-                  if (ctx.mounted) setStateSB(() {});
-                }
-
-                // Close dialog when done
-                if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
-              });
-            }
-
-            final progress = files.isEmpty ? 0.0 : (currentIndex + 1) / files.length;
-            final elapsed = stopwatch.elapsedMilliseconds / 1000.0;
-            final speedMBs = elapsed > 0 ? (totalBytesProcessed / 1024 / 1024) / elapsed : 0.0;
-
-            return AlertDialog(
-              title: Row(
-                children: [
-                  const Text('Importing files'),
-                  const Spacer(),
-                  Text('${currentIndex + 1}/${files.length}', style: Theme.of(ctx).textTheme.bodyMedium),
-                ],
-              ),
-              content: SizedBox(
-                width: 500,
-                height: 350,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Progress bar
-                    LinearProgressIndicator(value: progress),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(child: Text(currentFileName, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold))),
-                        Text('${speedMBs.toStringAsFixed(1)} MB/s', style: Theme.of(ctx).textTheme.bodySmall),
-                      ],
-                    ),
-                    Text('$imported imported, $skipped skipped, $failed failed',
-                      style: Theme.of(ctx).textTheme.bodySmall),
-                    const SizedBox(height: 12),
-                    const Divider(),
-                    const SizedBox(height: 4),
-                    Text('Queue:', style: Theme.of(ctx).textTheme.titleSmall),
-                    const SizedBox(height: 4),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: files.length,
-                        itemBuilder: (_, i) {
-                          final name = p.basename(files[i].path);
-                          final isDone = i < currentIndex || (i == currentIndex && cancelAll);
-                          final isCurrent = i == currentIndex && !cancelAll;
-                          final isSkipped = skipIndices.contains(i);
-                          final isPending = i > currentIndex && !isSkipped;
-
-                          IconData icon;
-                          Color color;
-                          if (isSkipped) { icon = Icons.skip_next; color = Colors.grey; }
-                          else if (isDone) { icon = Icons.check_circle; color = Colors.green; }
-                          else if (isCurrent) { icon = Icons.downloading; color = Theme.of(ctx).colorScheme.primary; }
-                          else { icon = Icons.schedule; color = Colors.grey; }
-
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 1),
-                            child: Row(
-                              children: [
-                                Icon(icon, size: 16, color: color),
-                                const SizedBox(width: 8),
-                                Expanded(child: Text(name, overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 12, color: isSkipped ? Colors.grey : null))),
-                                if (isPending)
-                                  IconButton(
-                                    icon: const Icon(Icons.close, size: 14),
-                                    tooltip: 'Skip this file',
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(maxWidth: 24, maxHeight: 24),
-                                    onPressed: () => setStateSB(() => skipIndices.add(i)),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    cancelAll = true;
-                    if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
-                  },
-                  child: const Text('Cancel All'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    stopwatch.stop();
-
-    if (mounted && (imported > 0 || skipped > 0 || failed > 0)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Done: $imported imported, $skipped skipped${failed > 0 ? ', $failed failed' : ''}'),
-      ));
-    }
-    await _reload();
+    // Start background import
+    ctrl.startImport(files);
   }
 
   String _uniquePath(String desiredPath) {
@@ -1127,11 +977,17 @@ class _ItemsGrid extends StatelessWidget {
         final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
         final hasThumb = thumbFile.existsSync();
         final isGif = _isGif(filePath);
-        // Show "no thumbnail" indicator for videos and GIFs without custom thumbnail
-        final needsThumbIndicator = (it.type == ItemType.video || isGif) && !hasThumb;
+        // Show "no thumbnail" indicator for videos and non-autoplay GIFs without custom thumbnail
+        final needsThumbIndicator = (it.type == ItemType.video || (isGif && !_gifAutoplay)) && !hasThumb;
 
         Widget thumb;
-        if (hasThumb) {
+        if (isGif && _gifAutoplay) {
+          // GIF autoplay ON — always show animated, ignore thumbnail
+          thumb = ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+          );
+        } else if (hasThumb) {
           // Custom thumbnail (set by user for videos or GIFs)
           thumb = ClipRRect(
             borderRadius: BorderRadius.circular(12),
@@ -1139,19 +995,11 @@ class _ItemsGrid extends StatelessWidget {
           );
         } else if (it.type == ItemType.image) {
           if (isGif) {
-            if (_gifAutoplay) {
-              // GIF autoplay enabled — show animated
-              thumb = ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-              );
-            } else {
-              // GIF: show only the first frame (no animation)
-              thumb = ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: _StaticGifImage(filePath: filePath, fit: BoxFit.cover),
-              );
-            }
+            // GIF autoplay OFF, no thumbnail: show static first frame
+            thumb = ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: _StaticGifImage(filePath: filePath, fit: BoxFit.cover),
+            );
           } else {
             // Static image
             thumb = ClipRRect(
