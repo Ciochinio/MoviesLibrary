@@ -173,6 +173,11 @@ class AppState extends ChangeNotifier {
     await refreshAll();
   }
 
+  Future<void> reorderTagKeyValues(List<String> orderedIds) async {
+    await tags!.reorderTagKeyValues(orderedIds);
+    await refreshAll();
+  }
+
   Future<void> selectSubcategory(String categoryId, String subcategoryId) async {
   // Switching folders exits global search mode.
   globalSearchTagIds.clear();

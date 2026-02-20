@@ -416,6 +416,15 @@ class TagRepo {
     });
   }
 
+  /// Reorder values within a key: pass the full list of value IDs in their new order.
+  Future<void> reorderTagKeyValues(List<String> orderedIds) async {
+    await db.transaction((txn) async {
+      for (int i = 0; i < orderedIds.length; i++) {
+        await txn.update('tag_key_values', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
+      }
+    });
+  }
+
   /// Ensures every tag key has a unique, sequential sort_order.
   Future<void> _normalizeTagKeySortOrders() async {
     final keys = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
@@ -447,7 +456,7 @@ class TagRepo {
       'SELECT kv.id, kv.key_id, k.key as key, kv.value, kv.description, kv.created_at '
       'FROM tag_key_values kv JOIN tag_keys k ON k.id = kv.key_id '
       'WHERE kv.key_id=? '
-      'ORDER BY kv.value COLLATE NOCASE',
+      'ORDER BY kv.sort_order ASC, kv.value COLLATE NOCASE',
       [keyId],
     );
     return rows
@@ -465,12 +474,15 @@ class TagRepo {
   Future<TagKeyValue> createValue(String keyId, String value, {String description = ''}) async {
     final id = _uuid.v4();
     final now = DateTime.now().millisecondsSinceEpoch;
+    final maxRows = await db.rawQuery('SELECT MAX(sort_order) as m FROM tag_key_values WHERE key_id=?', [keyId]);
+    final maxOrder = (maxRows.first['m'] as int?) ?? 0;
     await db.insert('tag_key_values', {
       'id': id,
       'key_id': keyId,
       'value': value,
       'description': description,
       'created_at': now,
+      'sort_order': maxOrder + 1,
     });
     final keyRow = await db.query('tag_keys', where: 'id=?', whereArgs: [keyId], limit: 1);
     final keyName = keyRow.isEmpty ? '' : (keyRow.first['key'] as String);

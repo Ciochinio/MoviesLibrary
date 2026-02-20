@@ -291,65 +291,90 @@ class _CategoryCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text('Subkategorie (poziom 2 — wymagany):', style: Theme.of(context).textTheme.bodyMedium),
             const SizedBox(height: 6),
-            for (final s in subs)
-              GestureDetector(
-                onSecondaryTapDown: (details) {
-                  _showSubcategoryContextMenu(context, details.globalPosition, s.id, s.name);
-                },
-                child: ListTile(
-                  dense: true,
-                  title: Row(
-                    children: [
-                      Expanded(child: Text(s.name)),
-                      FutureBuilder<bool>(
-                        future: app.categories!.hasAutoTags(s.id),
-                        builder: (context, snapshot) {
-                          if (snapshot.data != true) return const SizedBox.shrink();
-                          return Tooltip(
-                            message: 'Auto-tags enabled — right-click to configure',
-                            child: Icon(Icons.auto_fix_high, size: 16, color: Theme.of(context).colorScheme.primary),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Zmień nazwę',
-                        icon: const Icon(Icons.edit),
-                        onPressed: () async {
-                          final name = await CategoriesScreen._prompt(context, 'Nowa nazwa', initial: s.name);
-                          if (name == null || name.trim().isEmpty) return;
-                          await context.read<AppState>().renameSubcategory(s.id, name.trim());
-                        },
-                      ),
-                      IconButton(
-                        tooltip: 'Usuń (przenieś do Stash)',
-                        icon: const Icon(Icons.delete),
-                        onPressed: () async {
-                          final ok = await showDialog<bool>(
-                            context: context,
-                            builder: (c) => AlertDialog(
-                              title: const Text('Usunąć subkategorię?'),
-                              content: const Text('Elementy zostaną przeniesione do Stash.'),
-                              actions: [
-                                TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-                                FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
-                              ],
+            // ── Reorderable subcategory list ─────────────────────────────
+            if (subs.isNotEmpty) ...[
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: (subs.length * 56.0).clamp(0.0, 600.0)),
+                child: ReorderableListView.builder(
+                  shrinkWrap: true,
+                  buildDefaultDragHandles: false,
+                  itemCount: subs.length,
+                  onReorder: (oldIndex, newIndex) async {
+                    if (newIndex > oldIndex) newIndex--;
+                    final ids = subs.map((s) => s.id).toList();
+                    final movedId = ids.removeAt(oldIndex);
+                    ids.insert(newIndex, movedId);
+                    await context.read<AppState>().reorderSubcategories(category.id, ids);
+                  },
+                  itemBuilder: (ctx, si) {
+                    final s = subs[si];
+                    return GestureDetector(
+                      key: ValueKey(s.id),
+                      onSecondaryTapDown: (details) {
+                        _showSubcategoryContextMenu(context, details.globalPosition, s.id, s.name);
+                      },
+                      child: ListTile(
+                        dense: true,
+                        leading: ReorderableDragStartListener(
+                          index: si,
+                          child: const Icon(Icons.drag_handle, size: 18),
+                        ),
+                        title: Row(
+                          children: [
+                            Expanded(child: Text(s.name)),
+                            FutureBuilder<bool>(
+                              future: app.categories!.hasAutoTags(s.id),
+                              builder: (context, snapshot) {
+                                if (snapshot.data != true) return const SizedBox.shrink();
+                                return Tooltip(
+                                  message: 'Auto-tags enabled — right-click to configure',
+                                  child: Icon(Icons.auto_fix_high, size: 16, color: Theme.of(context).colorScheme.primary),
+                                );
+                              },
                             ),
-                          );
-                          if (ok == true) {
-                            await context.read<AppState>().deleteSubcategoryMoveToStash(s.id);
-                          }
-                        },
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: 'Zmień nazwę',
+                              icon: const Icon(Icons.edit),
+                              onPressed: () async {
+                                final name = await CategoriesScreen._prompt(context, 'Nowa nazwa', initial: s.name);
+                                if (name == null || name.trim().isEmpty) return;
+                                await context.read<AppState>().renameSubcategory(s.id, name.trim());
+                              },
+                            ),
+                            IconButton(
+                              tooltip: 'Usuń (przenieś do Stash)',
+                              icon: const Icon(Icons.delete),
+                              onPressed: () async {
+                                final ok = await showDialog<bool>(
+                                  context: context,
+                                  builder: (c) => AlertDialog(
+                                    title: const Text('Usunąć subkategorię?'),
+                                    content: const Text('Elementy zostaną przeniesione do Stash.'),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
+                                      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+                                    ],
+                                  ),
+                                );
+                                if (ok == true) {
+                                  await context.read<AppState>().deleteSubcategoryMoveToStash(s.id);
+                                }
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
-            const SizedBox(height: 6),
+              const SizedBox(height: 6),
+            ],
             OutlinedButton.icon(
               onPressed: () async {
                 final name = await CategoriesScreen._prompt(context, 'Nazwa subkategorii');

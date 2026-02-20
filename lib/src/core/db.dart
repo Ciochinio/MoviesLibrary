@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 7,
+        version: 8,
         onConfigure: (db) async {
           // Enforce foreign keys (needed for ON DELETE CASCADE).
           await db.execute('PRAGMA foreign_keys = ON');
@@ -37,6 +37,9 @@ class AppDb {
           }
           if (oldVersion < 7) {
             await _upgradeToV7(db);
+          }
+          if (oldVersion < 8) {
+            await _upgradeToV8(db);
           }
         },
       ),
@@ -124,6 +127,7 @@ class AppDb {
         value TEXT NOT NULL,
         description TEXT DEFAULT '',
         created_at INTEGER NOT NULL,
+        sort_order INTEGER DEFAULT 0,
         FOREIGN KEY(key_id) REFERENCES tag_keys(id) ON DELETE CASCADE,
         UNIQUE(key_id, value)
       );
@@ -329,6 +333,37 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
     final keys = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
     for (int i = 0; i < keys.length; i++) {
       await db.update('tag_keys', {'sort_order': i}, where: 'id=?', whereArgs: [keys[i]['id']]);
+    }
+  }
+
+  Future<void> _upgradeToV8(Database db) async {
+    // Add sort_order to tag_key_values for reorderable values within keys.
+    try {
+      await db.execute('ALTER TABLE tag_key_values ADD COLUMN sort_order INTEGER DEFAULT 0');
+    } catch (_) {
+      // Column already exists — safe to ignore.
+    }
+
+    // Normalize: assign sequential sort_order (0, 1, 2...) per key, alphabetically.
+    // This ensures existing values have a deterministic order from day one
+    // rather than all sitting at 0.
+    final keys = await db.query('tag_keys', columns: ['id']);
+    for (final key in keys) {
+      final keyId = key['id'] as String;
+      final values = await db.query(
+        'tag_key_values',
+        where: 'key_id=?',
+        whereArgs: [keyId],
+        orderBy: 'value COLLATE NOCASE',
+      );
+      for (int i = 0; i < values.length; i++) {
+        await db.update(
+          'tag_key_values',
+          {'sort_order': i},
+          where: 'id=?',
+          whereArgs: [values[i]['id']],
+        );
+      }
     }
   }
 

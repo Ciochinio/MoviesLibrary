@@ -312,54 +312,94 @@ class _KeyValueTagsTab extends StatelessWidget {
         ],
       ),
       children: [
-        for (final v in app.valuesForKey(k.id))
-          ListTile(
-            title: Text(v.value),
-            subtitle: v.description.isNotEmpty ? Text(v.description, maxLines: 1, overflow: TextOverflow.ellipsis) : null,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: 'Zmień nazwę',
-                  icon: const Icon(Icons.edit),
-                  onPressed: () async {
-                    final result = await TagsScreen._promptWithDescription(
-                      context,
-                      'Edytuj wartość',
-                      initialName: v.value,
-                      initialDescription: v.description,
-                    );
-                    if (result == null || result.name.trim().isEmpty) return;
-                    final a = context.read<AppState>();
-                    await a.tags!.renameValue(v.id, result.name.trim());
-                    await a.tags!.updateValueDescription(v.id, result.description);
-                    await a.refreshAll();
-                  },
-                ),
-                IconButton(
-                  tooltip: 'Usuń',
-                  icon: const Icon(Icons.delete),
-                  onPressed: () async {
-                    final usage = await context.read<AppState>().countTagKeyValueUsage(v.id);
-                    final ok = await showDialog<bool>(
-                      context: context,
-                      builder: (c) => AlertDialog(
-                        title: const Text('Usunąć wartość?'),
-                        content: Text('Wartość zostanie usunięta z $usage elementów.'),
-                        actions: [
-                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-                          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
-                        ],
-                      ),
-                    );
-                    if (ok == true) {
-                      await context.read<AppState>().deleteTagKeyValue(v.id);
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
+        // ── Reorderable values list ──────────────────────────────────────
+        Builder(
+          builder: (context) {
+            final values = app.valuesForKey(k.id);
+            if (values.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text('Brak wartości. Dodaj pierwszą przyciskiem poniżej.',
+                    style: TextStyle(fontSize: 12)),
+              );
+            }
+            // Cap height so the tile doesn't overflow; grows up to 400px.
+            final listHeight = (values.length * 56.0).clamp(0.0, 400.0);
+            return ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: listHeight),
+              child: ReorderableListView.builder(
+                shrinkWrap: true,
+                buildDefaultDragHandles: false,
+                itemCount: values.length,
+                onReorder: (oldIndex, newIndex) async {
+                  if (newIndex > oldIndex) newIndex--;
+                  final ids = values.map((v) => v.id).toList();
+                  final movedId = ids.removeAt(oldIndex);
+                  ids.insert(newIndex, movedId);
+                  await context.read<AppState>().reorderTagKeyValues(ids);
+                },
+                itemBuilder: (ctx, vi) {
+                  final v = values[vi];
+                  return ListTile(
+                    key: ValueKey(v.id),
+                    dense: true,
+                    leading: ReorderableDragStartListener(
+                      index: vi,
+                      child: const Icon(Icons.drag_handle, size: 18),
+                    ),
+                    title: Text(v.value),
+                    subtitle: v.description.isNotEmpty
+                        ? Text(v.description, maxLines: 1, overflow: TextOverflow.ellipsis)
+                        : null,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Zmień nazwę',
+                          icon: const Icon(Icons.edit),
+                          onPressed: () async {
+                            final result = await TagsScreen._promptWithDescription(
+                              context,
+                              'Edytuj wartość',
+                              initialName: v.value,
+                              initialDescription: v.description,
+                            );
+                            if (result == null || result.name.trim().isEmpty) return;
+                            final a = context.read<AppState>();
+                            await a.tags!.renameValue(v.id, result.name.trim());
+                            await a.tags!.updateValueDescription(v.id, result.description);
+                            await a.refreshAll();
+                          },
+                        ),
+                        IconButton(
+                          tooltip: 'Usuń',
+                          icon: const Icon(Icons.delete),
+                          onPressed: () async {
+                            final usage = await context.read<AppState>().countTagKeyValueUsage(v.id);
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (c) => AlertDialog(
+                                title: const Text('Usunąć wartość?'),
+                                content: Text('Wartość zostanie usunięta z $usage elementów.'),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
+                                  FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+                                ],
+                              ),
+                            );
+                            if (ok == true) {
+                              await context.read<AppState>().deleteTagKeyValue(v.id);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        ),
         ListTile(
           leading: const Icon(Icons.add),
           title: const Text('Dodaj wartość'),
