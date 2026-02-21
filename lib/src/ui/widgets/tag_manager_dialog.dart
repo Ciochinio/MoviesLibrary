@@ -51,6 +51,7 @@ class TagPickerBody extends StatelessWidget {
                                 label: Text(t.name),
                                 tooltip: t.description.isNotEmpty ? t.description : null,
                                 selected: simpleSelected.contains(t.id),
+                                showCheckmark: false,
                                 onSelected: (v) => onSimpleChanged(t.id, v),
                               ),
                           ],
@@ -129,6 +130,7 @@ class _SinglePickKeyValues extends StatelessWidget {
           FilterChip(
             label: Text(v.value),
             selected: kvSelected.contains(v.id),
+            showCheckmark: false,
             onSelected: (sel) {
               if (sel) {
                 // Deselect any other value in the same key first
