@@ -77,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       padding: const EdgeInsets.all(16),
       child: ListView(
         children: [
-          Text('Ustawienia', style: Theme.of(context).textTheme.headlineSmall),
+          Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 12),
 
           // ─── Import mode ───
@@ -86,11 +86,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: const Text('Tryb importu'),
               subtitle: Text(app.settings.importMode == ImportMode.copy
                   ? 'Kopiuj do /Library/files'
-                  : 'Przenieś do /Library/files'),
+                  : 'Move to /Library/files'),
               trailing: SegmentedButton<ImportMode>(
                 segments: const [
                   ButtonSegment(value: ImportMode.copy, label: Text('Kopiuj')),
-                  ButtonSegment(value: ImportMode.move, label: Text('Przenieś')),
+                  ButtonSegment(value: ImportMode.move, label: Text('Move')),
                 ],
                 selected: {app.settings.importMode},
                 onSelectionChanged: (s) => context.read<AppState>().setImportMode(s.first),
@@ -103,7 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             child: SwitchListTile(
               title: const Text('Pytaj przy usuwaniu'),
-              subtitle: const Text('Jeśli wyłączone, usuwanie będzie bez potwierdzenia.'),
+              subtitle: const Text('If disabled, deletion will proceed without confirmation.'),
               value: app.settings.confirmDelete,
               onChanged: (v) => context.read<AppState>().setConfirmDelete(v),
             ),
@@ -124,12 +124,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ─── Library path ───
           Card(
             child: ListTile(
-              title: const Text('Ścieżka biblioteki (Library)'),
+              title: const Text('Library path'),
               subtitle: Text(lib),
               trailing: FilledButton.icon(
                 onPressed: () async => await context.read<AppState>().promptAndCreateOrOpenLibrary(),
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Zmień'),
+                label: const Text('Change'),
               ),
             ),
           ),
@@ -240,9 +240,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const Text(
             'Portable tip:\n'
-            '• Skopiuj build aplikacji do /App\n'
-            '• Utwórz /Library obok /App\n'
-            '• Uruchom aplikację z /App — automatycznie wykryje /Library\n',
+            '• Copy app build to /App\n'
+            '• Create /Library next to /App\n'
+            '• Run the app from /App — it will auto-detect /Library\n',
           ),
         ],
       ),

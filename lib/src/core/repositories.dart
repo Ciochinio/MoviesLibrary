@@ -1194,7 +1194,17 @@ Future<({MediaItem item, MediaItem? duplicateOf})> importFile({
       createdAt: DateTime.fromMillisecondsSinceEpoch(r['created_at'] as int),
       isDuplicate: (r['is_duplicate'] as int) == 1,
       duplicateOfId: r['duplicate_of_id'] as String?,
+      isFavourite: ((r['is_favourite'] as int?) ?? 0) == 1,
     );
+  }
+
+  Future<void> toggleFavourite(String itemId, bool value) async {
+    await db.update('items', {'is_favourite': value ? 1 : 0}, where: 'id=?', whereArgs: [itemId]);
+  }
+
+  Future<List<MediaItem>> listFavourites() async {
+    final rows = await db.query('items', where: 'is_favourite=1', orderBy: 'created_at DESC');
+    return rows.map(_rowToItem).toList();
   }
 }
 

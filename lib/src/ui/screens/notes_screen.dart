@@ -47,7 +47,7 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   Future<void> _create() async {
-    final name = await _prompt('Tytuł notatki');
+    final name = await _prompt('Note title');
     if (name == null || name.trim().isEmpty) return;
     final app = context.read<AppState>();
     selected = await app.notes!.createNote(name.trim());
@@ -64,7 +64,7 @@ class _NotesScreenState extends State<NotesScreen> {
     final now = DateTime.now();
     final updated = Note(
       id: selected!.id,
-      title: titleCtrl.text.trim().isEmpty ? '(bez tytułu)' : titleCtrl.text.trim(),
+      title: titleCtrl.text.trim().isEmpty ? '(untitled)' : titleCtrl.text.trim(),
       content: contentCtrl.text,
       createdAt: selected!.createdAt,
       updatedAt: now,
@@ -79,11 +79,11 @@ class _NotesScreenState extends State<NotesScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('Usunąć notatkę?'),
-        content: const Text('Notatka i jej obrazki zostaną usunięte.'),
+        title: const Text('Delete note?'),
+        content: const Text('Note and its images will be deleted.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete')),
         ],
       ),
     );
@@ -130,7 +130,7 @@ class _NotesScreenState extends State<NotesScreen> {
                 padding: const EdgeInsets.all(8),
                 child: Row(
                   children: [
-                    Expanded(child: Text('Notatki', style: Theme.of(context).textTheme.titleMedium)),
+                    Expanded(child: Text('Notes', style: Theme.of(context).textTheme.titleMedium)),
                     IconButton(onPressed: _create, icon: const Icon(Icons.add)),
                     IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
                   ],
@@ -165,7 +165,7 @@ class _NotesScreenState extends State<NotesScreen> {
         const VerticalDivider(width: 1),
         Expanded(
           child: selected == null
-              ? const Center(child: Text('Wybierz notatkę lub utwórz nową'))
+              ? const Center(child: Text('Select a note or create a new one'))
               : Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
@@ -176,13 +176,13 @@ class _NotesScreenState extends State<NotesScreen> {
                           Expanded(
                             child: TextField(
                               controller: titleCtrl,
-                              decoration: const InputDecoration(labelText: 'Tytuł'),
+                              decoration: const InputDecoration(labelText: 'Title'),
                             ),
                           ),
                           const SizedBox(width: 12),
-                          FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('Zapisz')),
+                          FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('Save')),
                           const SizedBox(width: 8),
-                          OutlinedButton.icon(onPressed: _delete, icon: const Icon(Icons.delete), label: const Text('Usuń')),
+                          OutlinedButton.icon(onPressed: _delete, icon: const Icon(Icons.delete), label: const Text('Delete')),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -191,8 +191,9 @@ class _NotesScreenState extends State<NotesScreen> {
                           controller: contentCtrl,
                           maxLines: null,
                           expands: true,
+                          textAlignVertical: TextAlignVertical.top,
                           decoration: const InputDecoration(
-                            labelText: 'Treść',
+                            labelText: 'Content',
                             alignLabelWithHint: true,
                             border: OutlineInputBorder(),
                           ),
@@ -201,9 +202,9 @@ class _NotesScreenState extends State<NotesScreen> {
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Text('Obrazki', style: Theme.of(context).textTheme.titleMedium),
+                          Text('Images', style: Theme.of(context).textTheme.titleMedium),
                           const Spacer(),
-                          OutlinedButton.icon(onPressed: _addImage, icon: const Icon(Icons.image), label: const Text('Dodaj')),
+                          OutlinedButton.icon(onPressed: _addImage, icon: const Icon(Icons.image), label: const Text('Add')),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -293,7 +294,7 @@ GestureDetector(
           onSubmitted: (v) => Navigator.pop(ctx, v),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK')),
         ],
       ),

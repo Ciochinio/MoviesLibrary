@@ -48,17 +48,17 @@ class _AppShellState extends State<AppShell> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Nie wykryto biblioteki (/Library).'),
+              const Text('No library detected (/Library).'),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: () async {
                   await context.read<AppState>().promptAndCreateOrOpenLibrary();
                 },
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Wybierz/Utwórz Library'),
+                label: const Text('Select/Create Library'),
               ),
               const SizedBox(height: 8),
-              const Text('Tip: w trybie portable utwórz folder "Library" obok "/App".'),
+              const Text('Tip: in portable mode, create a "Library" folder next to "/App".'),
             ],
           ),
         ),
@@ -91,12 +91,12 @@ class _AppShellState extends State<AppShell> {
                   selectedIndex: index,
                   onDestinationSelected: (v) => setState(() => index = v),
                   destinations: const [
-                    NavigationRailDestination(icon: Icon(Icons.video_library), label: Text('Biblioteka')),
-                    NavigationRailDestination(icon: Icon(Icons.search), label: Text('Szukaj')),
-                    NavigationRailDestination(icon: Icon(Icons.note_alt), label: Text('Notatki')),
-                    NavigationRailDestination(icon: Icon(Icons.sell), label: Text('Tagi')),
-                    NavigationRailDestination(icon: Icon(Icons.folder), label: Text('Kategorie')),
-                    NavigationRailDestination(icon: Icon(Icons.settings), label: Text('Ustawienia')),
+                    NavigationRailDestination(icon: Icon(Icons.video_library), label: Text('Library')),
+                    NavigationRailDestination(icon: Icon(Icons.search), label: Text('Search')),
+                    NavigationRailDestination(icon: Icon(Icons.note_alt), label: Text('Notes')),
+                    NavigationRailDestination(icon: Icon(Icons.sell), label: Text('Tags')),
+                    NavigationRailDestination(icon: Icon(Icons.folder), label: Text('Categories')),
+                    NavigationRailDestination(icon: Icon(Icons.settings), label: Text('Settings')),
                   ],
                 ),
                 const VerticalDivider(width: 1),

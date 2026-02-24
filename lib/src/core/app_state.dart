@@ -44,7 +44,7 @@ class AppState extends ChangeNotifier {
   final Map<String, List<TagKeyValue>> _tagValuesByKey = {};
 
   String? stashCategoryId;
-  String? stashSubcategoryId; // default "Do przypisania"
+  String? stashSubcategoryId; // default "Unassigned"
 
   bool get isReady => _db != null && paths != null;
 
@@ -72,7 +72,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> promptAndCreateOrOpenLibrary() async {
-    final res = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder Library (lub utwórz nowy)');
+    final res = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select Library folder (or create new)');
     if (res == null) return;
     await openLibrary(res);
   }
@@ -112,7 +112,7 @@ class AppState extends ChangeNotifier {
     final cats = await _db!.query('categories');
     if (cats.isNotEmpty) return;
 
-    final defaults = ['Dramat', 'Komedia', 'Akcja', 'Aktor', 'Aktorka', 'Reżyser', 'Stash'];
+    final defaults = ['Drama', 'Comedy', 'Action', 'Actor', 'Actress', 'Director', 'Stash'];
     for (final name in defaults) {
       await _db!.insert('categories', {'id': _id(), 'name': name});
     }
@@ -120,7 +120,7 @@ class AppState extends ChangeNotifier {
     final stashRows = await _db!.query('categories', where: 'name=?', whereArgs: ['Stash'], limit: 1);
     final stashId = stashRows.first['id'] as String;
 
-    await _db!.insert('subcategories', {'id': _id(), 'category_id': stashId, 'name': 'Do przypisania'});
+    await _db!.insert('subcategories', {'id': _id(), 'category_id': stashId, 'name': 'Unassigned'});
   }
 
   String _id() => DateTime.now().microsecondsSinceEpoch.toString() +
@@ -533,6 +533,17 @@ Future<void> setGifAutoplay(bool value) async {
   notifyListeners();
 }
 
+  Future<void> toggleFavourite(String itemId, bool value) async {
+    if (!isReady) return;
+    await items!.toggleFavourite(itemId, value);
+    // No notifyListeners() here — callers handle UI update locally to avoid grid flash.
+  }
+
+  Future<List<MediaItem>> loadFavourites() async {
+    if (!isReady) return [];
+    return await items!.listFavourites();
+  }
+
   Future<({List<MediaItem> deleted, List<MediaItem> failed})> deleteOneItem(MediaItem item) async {
     final res = await items!.deleteItems([item]);
     await refreshFromDiskAndMigrate();
@@ -583,7 +594,7 @@ Future<void> setGifAutoplay(bool value) async {
         };
 
         final catName = LibraryFolders.safeSegment((json['category'] as String?) ?? 'Stash');
-        final subName = LibraryFolders.safeSegment((json['subcategory'] as String?) ?? 'Do przypisania');
+        final subName = LibraryFolders.safeSegment((json['subcategory'] as String?) ?? 'Unassigned');
 
         // Ensure category
         String catId;

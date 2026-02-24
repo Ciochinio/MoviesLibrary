@@ -28,6 +28,7 @@ class MediaItem {
   final DateTime createdAt;
   final bool isDuplicate;
   final String? duplicateOfId;
+  final bool isFavourite;
 
   MediaItem({
     required this.id,
@@ -40,7 +41,24 @@ class MediaItem {
     required this.createdAt,
     required this.isDuplicate,
     required this.duplicateOfId,
+    this.isFavourite = false,
   });
+
+  MediaItem copyWith({bool? isFavourite}) {
+    return MediaItem(
+      id: id,
+      subcategoryId: subcategoryId,
+      type: type,
+      originalName: originalName,
+      storedRelPath: storedRelPath,
+      sizeBytes: sizeBytes,
+      sha256: sha256,
+      createdAt: createdAt,
+      isDuplicate: isDuplicate,
+      duplicateOfId: duplicateOfId,
+      isFavourite: isFavourite ?? this.isFavourite,
+    );
+  }
 }
 
 class Tag {

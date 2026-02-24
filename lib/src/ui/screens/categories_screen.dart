@@ -18,16 +18,16 @@ class CategoriesScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('Kategorie', style: Theme.of(context).textTheme.headlineSmall),
+              Text('Categories', style: Theme.of(context).textTheme.headlineSmall),
               const Spacer(),
               FilledButton.icon(
                 onPressed: () async {
-                  final name = await _prompt(context, 'Nowa kategoria');
+                  final name = await _prompt(context, 'New category');
                   if (name == null || name.trim().isEmpty) return;
                   await context.read<AppState>().createCategory(name.trim());
                 },
                 icon: const Icon(Icons.add),
-                label: const Text('Dodaj kategorię'),
+                label: const Text('Add category'),
               ),
             ],
           ),
@@ -60,7 +60,7 @@ class CategoriesScreen extends StatelessWidget {
           onSubmitted: (v) => Navigator.pop(ctx, v),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK')),
         ],
       ),
@@ -258,26 +258,26 @@ class _CategoryCard extends StatelessWidget {
               children: [
                 Expanded(child: Text(category.name, style: Theme.of(context).textTheme.titleLarge)),
                 IconButton(
-                  tooltip: 'Zmień nazwę',
+                  tooltip: 'Rename',
                   icon: const Icon(Icons.edit),
                   onPressed: () async {
-                    final name = await CategoriesScreen._prompt(context, 'Nowa nazwa', initial: category.name);
+                    final name = await CategoriesScreen._prompt(context, 'New name', initial: category.name);
                     if (name == null || name.trim().isEmpty) return;
                     await context.read<AppState>().renameCategory(category.id, name.trim());
                   },
                 ),
                 IconButton(
-                  tooltip: 'Usuń (przenieś do Stash)',
+                  tooltip: 'Delete (move to Stash)',
                   icon: const Icon(Icons.delete),
                   onPressed: () async {
                     final ok = await showDialog<bool>(
                       context: context,
                       builder: (c) => AlertDialog(
-                        title: const Text('Usunąć kategorię?'),
-                        content: const Text('Elementy zostaną przeniesione do Stash.'),
+                        title: const Text('Delete category?'),
+                        content: const Text('Items will be moved to Stash.'),
                         actions: [
-                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-                          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+                          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete')),
                         ],
                       ),
                     );
@@ -289,7 +289,7 @@ class _CategoryCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Text('Subkategorie (poziom 2 — wymagany):', style: Theme.of(context).textTheme.bodyMedium),
+            Text('Subcategories:', style: Theme.of(context).textTheme.bodyMedium),
             const SizedBox(height: 6),
             // ── Reorderable subcategory list ─────────────────────────────
             if (subs.isNotEmpty) ...[
@@ -338,26 +338,26 @@ class _CategoryCard extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              tooltip: 'Zmień nazwę',
+                              tooltip: 'Rename',
                               icon: const Icon(Icons.edit),
                               onPressed: () async {
-                                final name = await CategoriesScreen._prompt(context, 'Nowa nazwa', initial: s.name);
+                                final name = await CategoriesScreen._prompt(context, 'New name', initial: s.name);
                                 if (name == null || name.trim().isEmpty) return;
                                 await context.read<AppState>().renameSubcategory(s.id, name.trim());
                               },
                             ),
                             IconButton(
-                              tooltip: 'Usuń (przenieś do Stash)',
+                              tooltip: 'Delete (move to Stash)',
                               icon: const Icon(Icons.delete),
                               onPressed: () async {
                                 final ok = await showDialog<bool>(
                                   context: context,
                                   builder: (c) => AlertDialog(
-                                    title: const Text('Usunąć subkategorię?'),
-                                    content: const Text('Elementy zostaną przeniesione do Stash.'),
+                                    title: const Text('Delete subcategory?'),
+                                    content: const Text('Items will be moved to Stash.'),
                                     actions: [
-                                      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Anuluj')),
-                                      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Usuń')),
+                                      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+                                      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete')),
                                     ],
                                   ),
                                 );
@@ -377,12 +377,12 @@ class _CategoryCard extends StatelessWidget {
             ],
             OutlinedButton.icon(
               onPressed: () async {
-                final name = await CategoriesScreen._prompt(context, 'Nazwa subkategorii');
+                final name = await CategoriesScreen._prompt(context, 'Subcategory name');
                 if (name == null || name.trim().isEmpty) return;
                 await context.read<AppState>().createSubcategory(category.id, name.trim());
               },
               icon: const Icon(Icons.add),
-              label: const Text('Dodaj subkategorię'),
+              label: const Text('Add subcategory'),
             ),
           ],
         ),

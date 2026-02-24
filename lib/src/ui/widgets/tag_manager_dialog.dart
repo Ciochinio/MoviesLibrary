@@ -163,7 +163,7 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
       return StatefulBuilder(
         builder: (ctx, setState) {
           return AlertDialog(
-            title: const Text('Tagi'),
+            title: const Text('Tags'),
             content: SizedBox(
               width: 900,
               height: 545,
@@ -179,14 +179,14 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
               TextButton(
                 onPressed: () => setState(() { simpleSelected.clear(); kvSelected.clear(); }),
-                child: const Text('Wyczyść'),
+                child: const Text('Clear'),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, (simpleTagIds: simpleSelected, keyValueIds: kvSelected)),
-                child: const Text('Zapisz'),
+                child: const Text('Save'),
               ),
             ],
           );

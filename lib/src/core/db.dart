@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 8,
+        version: 9,
         onConfigure: (db) async {
           // Enforce foreign keys (needed for ON DELETE CASCADE).
           await db.execute('PRAGMA foreign_keys = ON');
@@ -40,6 +40,9 @@ class AppDb {
           }
           if (oldVersion < 8) {
             await _upgradeToV8(db);
+          }
+          if (oldVersion < 9) {
+            await _upgradeToV9(db);
           }
         },
       ),
@@ -86,6 +89,7 @@ class AppDb {
         created_at INTEGER NOT NULL,
         is_duplicate INTEGER NOT NULL DEFAULT 0,
         duplicate_of_id TEXT,
+        is_favourite INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(subcategory_id) REFERENCES subcategories(id)
       );
     ''');
@@ -334,6 +338,12 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
     for (int i = 0; i < keys.length; i++) {
       await db.update('tag_keys', {'sort_order': i}, where: 'id=?', whereArgs: [keys[i]['id']]);
     }
+  }
+
+  Future<void> _upgradeToV9(Database db) async {
+    try {
+      await db.execute('ALTER TABLE items ADD COLUMN is_favourite INTEGER NOT NULL DEFAULT 0');
+    } catch (_) {}
   }
 
   Future<void> _upgradeToV8(Database db) async {

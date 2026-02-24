@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/library_folders.dart';
 import '../../core/models.dart';
+import '../../core/thumbnail_service.dart';
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/tag_filter_panel.dart';
 
@@ -77,7 +78,7 @@ class _SearchScreenState extends State<SearchScreen> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('Wybierz docelową subkategorię'),
+          title: const Text('Select target subcategory'),
           content: SizedBox(
             width: 520,
             height: 520,
@@ -98,7 +99,7 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           ],
         );
       },
@@ -227,6 +228,8 @@ class _SearchScreenState extends State<SearchScreen> {
                           : _ItemsGrid(
                               items: _results,
                               libraryFilesDir: app.paths!.filesDir,
+                              thumbsDir: app.paths!.thumbsDir,
+                              gifAutoplay: app.settings.gifAutoplay,
                               selectedItemId: _selected?.id,
                               onSelect: (item) => setState(() => _selected = item),
                             ),
@@ -243,7 +246,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             await OpenFilex.open(abs);
                           },
                           onExport: () async {
-                            final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+                            final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
                             if (dir == null) return;
 
                             final srcAbs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
@@ -251,7 +254,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             await File(srcAbs).copy(destPath);
 
                             if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wyeksportowano.')));
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Exported.')));
                           },
                           onMove: () async {
                             final targetSubId = await _pickSubcategoryDialog();
@@ -260,7 +263,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             await app.items!.moveItemsToSubcategory([_selected!], targetSubId);
 
                             if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Przeniesiono.')));
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Moved.')));
                             await _runSearch();
                           },
                           onTags: () async {
@@ -311,16 +314,16 @@ class _SearchScreenState extends State<SearchScreen> {
                                   bool dontAsk = false;
                                   return StatefulBuilder(
                                     builder: (ctx, setStateDialog) => AlertDialog(
-                                      title: const Text('Potwierdzenie'),
+                                      title: const Text('Confirmation'),
                                       content: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          Text('Czy na pewno usunąć:\n${_selected!.originalName}?'),
+                                          Text('Are you sure you want to delete:\n${_selected!.originalName}?'),
                                           const SizedBox(height: 16),
                                           CheckboxListTile(
                                             value: dontAsk,
-                                            title: const Text('Nie pytaj więcej'),
+                                            title: const Text("Don't ask again"),
                                             dense: true,
                                             contentPadding: EdgeInsets.zero,
                                             onChanged: (v) => setStateDialog(() => dontAsk = v ?? false),
@@ -328,8 +331,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                         ],
                                       ),
                                       actions: [
-                                        TextButton(onPressed: () => Navigator.pop(ctx, (confirm: false, dontAsk: false)), child: const Text('Anuluj')),
-                                        FilledButton(onPressed: () => Navigator.pop(ctx, (confirm: true, dontAsk: dontAsk)), child: const Text('Usuń')),
+                                        TextButton(onPressed: () => Navigator.pop(ctx, (confirm: false, dontAsk: false)), child: const Text('Cancel')),
+                                        FilledButton(onPressed: () => Navigator.pop(ctx, (confirm: true, dontAsk: dontAsk)), child: const Text('Delete')),
                                       ],
                                     ),
                                   );
@@ -344,16 +347,16 @@ class _SearchScreenState extends State<SearchScreen> {
 
                             if (dontAskAgain) {
                               await app.setConfirmDelete(false);
-                              messenger.showSnackBar(const SnackBar(content: Text('Wyłączono potwierdzanie usuwania.')));
+                              messenger.showSnackBar(const SnackBar(content: Text('Delete confirmation disabled.')));
                             }
 
                             final res = await app.deleteOneItem(_selected!);
                             if (res.deleted.isNotEmpty) {
-                              messenger.showSnackBar(const SnackBar(content: Text('Usunięto.')));
+                              messenger.showSnackBar(const SnackBar(content: Text('Deleted.')));
                               setState(() => _selected = null);
                               await _runSearch();
                             } else {
-                              messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku (np. brak uprawnień).')));
+                              messenger.showSnackBar(const SnackBar(content: Text('Failed to delete file (e.g. no permissions).')));
                             }
                           },
                         ),
@@ -394,20 +397,26 @@ class _SearchScreenState extends State<SearchScreen> {
 class _ItemsGrid extends StatelessWidget {
   final List<MediaItem> items;
   final Directory libraryFilesDir;
+  final Directory thumbsDir;
+  final bool gifAutoplay;
   final String? selectedItemId;
   final void Function(MediaItem item) onSelect;
 
   const _ItemsGrid({
     required this.items,
     required this.libraryFilesDir,
+    required this.thumbsDir,
+    required this.gifAutoplay,
     required this.selectedItemId,
     required this.onSelect,
   });
 
+  bool _isGif(String filePath) => p.extension(filePath).toLowerCase() == '.gif';
+
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const Center(child: Text('Brak wyników'));
+      return const Center(child: Text('No results'));
     }
 
     return GridView.builder(
@@ -424,20 +433,54 @@ class _ItemsGrid extends StatelessWidget {
         final filePath = LibraryFolders.absPath(libraryFilesDir, it.storedRelPath);
         final isSelected = it.id == selectedItemId;
 
+        final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
+        final hasThumb = thumbFile.existsSync();
+        final isGif = _isGif(filePath);
+        final needsThumbIndicator = (it.type == ItemType.video || (isGif && !gifAutoplay)) && !hasThumb;
+
         Widget thumb;
-        if (it.type == ItemType.image) {
+        if (isGif && gifAutoplay) {
           thumb = ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.file(
-              File(filePath),
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48),
-            ),
+            child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
+                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
           );
+        } else if (hasThumb) {
+          thumb = ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.file(thumbFile, fit: BoxFit.cover, cacheWidth: 320,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48)),
+          );
+        } else if (it.type == ItemType.image) {
+          if (isGif) {
+            thumb = ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+            );
+          } else {
+            thumb = ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+            );
+          }
         } else if (it.type == ItemType.video) {
-          thumb = const Center(child: Icon(Icons.movie, size: 56));
+          thumb = Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: const Center(child: Icon(Icons.movie, size: 56)),
+          );
         } else {
-          thumb = const Center(child: Icon(Icons.insert_drive_file, size: 56));
+          thumb = Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: const Center(child: Icon(Icons.insert_drive_file, size: 56)),
+          );
         }
 
         return InkWell(
@@ -458,16 +501,46 @@ class _ItemsGrid extends StatelessWidget {
                   child: Stack(
                     children: [
                       Positioned.fill(child: thumb),
+                      // Video badge
+                      if (it.type == ItemType.video && hasThumb)
+                        Positioned(
+                          right: 8, bottom: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
+                            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.play_arrow, size: 14, color: Colors.white),
+                              SizedBox(width: 2),
+                              Text('Video', style: TextStyle(color: Colors.white, fontSize: 10)),
+                            ]),
+                          ),
+                        ),
+                      // GIF badge
+                      if (isGif && hasThumb)
+                        Positioned(
+                          right: 8, bottom: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
+                            child: const Text('GIF', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      // ! indicator for videos/GIFs without thumbnail
+                      if (needsThumbIndicator)
+                        Positioned(
+                          left: 8, bottom: 8,
+                          child: Container(
+                            width: 22, height: 22,
+                            decoration: BoxDecoration(color: Colors.orange.withOpacity(0.9), shape: BoxShape.circle),
+                            child: const Center(child: Text('!', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold))),
+                          ),
+                        ),
                       if (it.isDuplicate)
                         Positioned(
-                          right: 8,
-                          top: 8,
+                          right: 8, top: 8,
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.6),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
+                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(999)),
                             child: const Text('DUP', style: TextStyle(color: Colors.white, fontSize: 12)),
                           ),
                         ),
@@ -476,12 +549,8 @@ class _ItemsGrid extends StatelessWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.all(10),
-                  child: Text(
-                    it.originalName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
+                  child: Text(it.originalName, maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium),
                 ),
               ],
             ),
@@ -521,7 +590,7 @@ class _DetailsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Szczegóły', style: Theme.of(context).textTheme.titleMedium),
+          Text('Details', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           if (item.type == ItemType.image)
             Expanded(
@@ -541,15 +610,15 @@ class _DetailsPanel extends StatelessWidget {
           const SizedBox(height: 6),
           Text('SHA256: ${item.sha256.substring(0, 12)}…'),
           const SizedBox(height: 10),
-          FilledButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new), label: const Text('Otwórz w systemie')),
+          FilledButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new), label: const Text('Open in system')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download), label: const Text('Eksportuj na dysk')),
+          OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download), label: const Text('Export to disk')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onMove, icon: const Icon(Icons.drive_file_move), label: const Text('Przenieś')),
+          OutlinedButton.icon(onPressed: onMove, icon: const Icon(Icons.drive_file_move), label: const Text('Move')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell), label: const Text('Tagi')),
+          OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell), label: const Text('Tags')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete), label: const Text('Usuń')),
+          OutlinedButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete), label: const Text('Delete')),
           const SizedBox(height: 10),
           FutureBuilder<List<Tag>>(
             future: app.items!.listTagsForItem(item.id),

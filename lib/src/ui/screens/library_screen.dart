@@ -28,6 +28,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<MediaItem> loaded = [];
   bool loading = false;
   bool _dragging = false;
+  final ScrollController _gridScrollController = ScrollController();
+  bool _selectMode = false;
+
+  @override
+  void dispose() {
+    _gridScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -38,19 +46,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _reload() async {
     final app = context.read<AppState>();
     if (!app.isReady) return;
+    // Preserve scroll position so tag operations don't jump to top.
+    final scrollOffset = _gridScrollController.hasClients ? _gridScrollController.offset : 0.0;
     setState(() => loading = true);
     loaded = await app.loadCurrentItems();
     if (selectedItem != null) {
       selectedItem = loaded.where((e) => e.id == selectedItem!.id).cast<MediaItem?>().firstOrNull;
     }
     setState(() => loading = false);
+    // Restore scroll position after rebuild.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_gridScrollController.hasClients && scrollOffset > 0) {
+        _gridScrollController.jumpTo(
+          scrollOffset.clamp(0.0, _gridScrollController.position.maxScrollExtent),
+        );
+      }
+    });
   }
 
   Future<void> _refreshFromDisk() async {
     final app = context.read<AppState>();
     if (!app.isReady) return;
     await _runWithProgress(
-      title: 'Odświeżanie biblioteki…',
+      title: 'Refreshing library…',
       task: () async { await app.refreshFromDiskAndMigrate(); },
     );
     await _reload();
@@ -63,17 +81,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context: context,
       builder: (ctx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(leading: const Icon(Icons.folder), title: const Text('Eksportuj aktualną subkategorię'), onTap: () => Navigator.pop(ctx, 'sub')),
-          ListTile(leading: const Icon(Icons.folder_copy), title: const Text('Eksportuj całą kategorię'), onTap: () => Navigator.pop(ctx, 'cat')),
+          ListTile(leading: const Icon(Icons.folder), title: const Text('Export current subcategory'), onTap: () => Navigator.pop(ctx, 'sub')),
+          ListTile(leading: const Icon(Icons.folder_copy), title: const Text('Export entire category'), onTap: () => Navigator.pop(ctx, 'cat')),
         ]),
       ),
     );
     if (choice == null) return;
-    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
     if (dir == null) return;
     int count = 0;
     await _runWithProgress(
-      title: 'Eksportowanie…',
+      title: 'Exporting…',
       task: () async {
         if (choice == 'cat') {
           count = await app.exportCategoryToFolder(categoryId: app.selectedCategoryId!, destRoot: dir);
@@ -83,7 +101,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       },
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Wyeksportowano $count plików.')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported $count files.')));
   }
 
   Future<void> _runWithProgress({required String title, required Future<void> Function() task}) async {
@@ -133,7 +151,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final add = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Duplikat wykryty'),
+          title: const Text('Duplicate!'),
           content: Text('${p.basename(file.path)} is a duplicate of:\n$existingName'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Skip')),
@@ -176,10 +194,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (ctx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(leading: const Icon(Icons.sell), title: const Text('Masowo dodaj tag'), onTap: () => Navigator.pop(ctx, 'addTag')),
-          ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Masowo usuń tag'), onTap: () => Navigator.pop(ctx, 'removeTag')),
-          ListTile(leading: const Icon(Icons.drive_file_move), title: const Text('Przenieś do subkategorii'), onTap: () => Navigator.pop(ctx, 'move')),
-          ListTile(leading: const Icon(Icons.download), title: const Text('Eksportuj na dysk'), onTap: () => Navigator.pop(ctx, 'export')),
-          ListTile(leading: const Icon(Icons.delete), title: const Text('Usuń (fizycznie)'), onTap: () => Navigator.pop(ctx, 'delete')),
+          ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Bulk remove tag'), onTap: () => Navigator.pop(ctx, 'removeTag')),
+          ListTile(leading: const Icon(Icons.drive_file_move), title: const Text('Move to subcategory'), onTap: () => Navigator.pop(ctx, 'move')),
+          ListTile(leading: const Icon(Icons.download), title: const Text('Export to disk'), onTap: () => Navigator.pop(ctx, 'export')),
+          ListTile(leading: const Icon(Icons.delete), title: const Text('Delete (permanently)'), onTap: () => Navigator.pop(ctx, 'delete')),
         ]),
       ),
     );
@@ -200,7 +218,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     if (choice == 'export') {
-      final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+      final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
       if (dir == null) return;
       final toExport = loaded.where((i) => app.selectedItemIds.contains(i.id)).toList();
       int okCount = 0;
@@ -210,18 +228,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
         await src.copy(_uniquePath(p.join(dir, item.originalName)));
         okCount++;
       }
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Wyeksportowano $okCount plików.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported $okCount files.')));
       return;
     }
     if (choice == 'delete') {
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Usunąć zaznaczone?'),
-          content: const Text('To usunie rekordy i fizyczne pliki z /Library/files.'),
+          title: const Text('Delete selected?'),
+          content: const Text('This will delete records and files from /Library/files.'),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Usuń')),
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
           ],
         ),
       );
@@ -230,9 +248,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         await _reload();
         if (res.failed.isNotEmpty) {
           final names = res.failed.map((e) => e.originalName).take(3).join(', ');
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nie udało się usunąć: $names')));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to delete: $names')));
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Usunięto ${res.deleted.length} elementów.')));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Deleted ${res.deleted.length} items.')));
         }
       }
     }
@@ -245,7 +263,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Wybierz tag'),
         content: SizedBox(width: 420, height: 300, child: ListView(children: [for (final t in app.tagList) ListTile(title: Text(t.name), onTap: () => Navigator.pop(ctx, t.id))])),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zamknij'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
       ),
     );
   }
@@ -255,7 +273,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Wybierz subkategorię'),
+        title: const Text('Select subcategory'),
         content: SizedBox(
           width: 520, height: 420,
           child: ListView(children: [
@@ -266,7 +284,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ]
           ]),
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Zamknij'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
       ),
     );
   }
@@ -280,16 +298,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final newName = await showDialog<String>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('Zmień nazwę'),
-        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Nowa nazwa pliku', border: OutlineInputBorder(), helperText: 'Tagi i metadane zostaną zachowane'), autofocus: true, onSubmitted: (v) => Navigator.pop(dialogCtx, v)),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Anuluj')), FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Zmień nazwę'))],
+        title: const Text('Rename'),
+        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'New file name', border: OutlineInputBorder(), helperText: 'Tags and metadata will be preserved'), autofocus: true, onSubmitted: (v) => Navigator.pop(dialogCtx, v)),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Rename'))],
       ),
     );
     if (newName == null || newName.trim().isEmpty || newName.trim() == item.originalName) return;
     final app = context.read<AppState>();
     final success = await app.items!.renameItem(item, newName.trim());
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success ? 'Zmieniono nazwę' : 'Nie udało się zmienić nazwy')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success ? 'Renamed' : 'Failed to rename')));
     if (success) await _reload();
   }
 
@@ -316,13 +334,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _exportItem(MediaItem item) async {
     final app = context.read<AppState>();
-    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Wybierz folder docelowy');
+    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
     if (dir == null) return;
     final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
     if (!await src.exists()) { if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plik nie istnieje.'))); return; }
     await src.copy(_uniquePath(p.join(dir, item.originalName)));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wyeksportowano plik.')));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File exported.')));
   }
 
   Future<void> _deleteItem(MediaItem item) async {
@@ -337,15 +355,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
           bool localDontAsk = false;
           return StatefulBuilder(
             builder: (ctx, setStateSB) => AlertDialog(
-              title: const Text('Usunąć element?'),
+              title: const Text('Delete item?'),
               content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('To usunie element oraz fizyczny plik z /Library/files.'),
+                const Text('This will delete records and files from /Library/files.'),
                 const SizedBox(height: 12),
-                CheckboxListTile(contentPadding: EdgeInsets.zero, value: localDontAsk, title: const Text('Nie pytaj więcej'), onChanged: (v) => setStateSB(() => localDontAsk = v ?? false)),
+                CheckboxListTile(contentPadding: EdgeInsets.zero, value: localDontAsk, title: const Text("Don't ask again"), onChanged: (v) => setStateSB(() => localDontAsk = v ?? false)),
               ]),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
-                FilledButton(onPressed: () { dontAskAgain = localDontAsk; Navigator.pop(ctx, true); }, child: const Text('Usuń')),
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                FilledButton(onPressed: () { dontAskAgain = localDontAsk; Navigator.pop(ctx, true); }, child: const Text('Delete')),
               ],
             ),
           );
@@ -356,12 +374,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!proceed) return;
     try {
       final res = await app.deleteOneItem(item);
-      if (res.failed.isNotEmpty) { messenger.showSnackBar(const SnackBar(content: Text('Nie udało się usunąć pliku.'))); return; }
+      if (res.failed.isNotEmpty) { messenger.showSnackBar(const SnackBar(content: Text('Failed to delete file.'))); return; }
       if (selectedItem?.id == item.id) selectedItem = null;
       await _reload();
-      messenger.showSnackBar(const SnackBar(content: Text('Usunięto element.')));
+      messenger.showSnackBar(const SnackBar(content: Text('Item deleted.')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Błąd usuwania: $e')));
+      messenger.showSnackBar(SnackBar(content: Text('Delete error: $e')));
     }
   }
 
@@ -522,6 +540,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (chosen != null) {
       final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: chosen);
       if (!mounted) return;
+      if (ok) {
+        // Evict cached image so the grid shows the new thumbnail immediately.
+        final thumbPath = p.join(app.paths!.thumbsDir.path, '${item.id}.jpg');
+        await FileImage(File(thumbPath)).evict();
+      }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
       setState(() {});
     }
@@ -539,6 +562,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (result == null || result.files.isEmpty || result.files.first.path == null) return;
     final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: result.files.first.path!);
     if (!mounted) return;
+    if (ok) {
+      // Evict cached image so the grid shows the new thumbnail immediately.
+      final appState = context.read<AppState>();
+      final thumbPath = p.join(appState.paths!.thumbsDir.path, '${item.id}.jpg');
+      await FileImage(File(thumbPath)).evict();
+    }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
     setState(() {});
   }
@@ -556,16 +585,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context: gridContext,
       position: RelativeRect.fromLTRB(globalPosition.dx, globalPosition.dy, globalPosition.dx, globalPosition.dy),
       items: [
-        const PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit, size: 20), SizedBox(width: 12), Text('Zmień nazwę...')])),
+        const PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit, size: 20), SizedBox(width: 12), Text('Rename...')])),
         const PopupMenuItem(value: 'tags', child: Row(children: [Icon(Icons.sell, size: 20), SizedBox(width: 12), Text('Tagi...')])),
         if (showThumbOption)
           const PopupMenuItem(value: 'thumbnail', child: Row(children: [Icon(Icons.photo_camera, size: 20), SizedBox(width: 12), Text('Set Thumbnail...')])),
-        const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move, size: 20), SizedBox(width: 12), Text('Przenieś do...')])),
+        const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move, size: 20), SizedBox(width: 12), Text('Move to...')])),
         const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Eksportuj...')])),
         const PopupMenuDivider(),
-        const PopupMenuItem(value: 'open_folder', child: Row(children: [Icon(Icons.folder_open, size: 20), SizedBox(width: 12), Text('Otwórz w folderze')])),
+        const PopupMenuItem(value: 'open_folder', child: Row(children: [Icon(Icons.folder_open, size: 20), SizedBox(width: 12), Text('Show in folder')])),
         const PopupMenuDivider(),
-        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 20, color: Colors.red), SizedBox(width: 12), Text('Usuń', style: TextStyle(color: Colors.red))])),
+        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 20, color: Colors.red), SizedBox(width: 12), Text('Delete', style: TextStyle(color: Colors.red))])),
       ],
     ).then((value) async {
       if (value == null) return;
@@ -646,8 +675,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 padding: const EdgeInsets.all(8.0),
                 child: Row(
                   children: [
-                    Expanded(child: Text('Kategorie', style: Theme.of(context).textTheme.titleMedium)),
-                    IconButton(tooltip: 'Odśwież', onPressed: () async => _refreshFromDisk(), icon: const Icon(Icons.refresh)),
+                    Expanded(child: Text('Categories', style: Theme.of(context).textTheme.titleMedium)),
+                    IconButton(tooltip: 'Refresh', onPressed: () async => _refreshFromDisk(), icon: const Icon(Icons.refresh)),
                   ],
                 ),
               ),
@@ -681,8 +710,38 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               selectedItemId: selectedItem?.id,
                               selectedIds: app.selectedItemIds,
                               gifAutoplay: app.settings.gifAutoplay,
-                              onSelect: (item) => setState(() => selectedItem = item),
-                              onToggleBulk: (id) => app.toggleItemSelection(id),
+                              scrollController: _gridScrollController,
+                              selectMode: _selectMode,
+                              onSelect: (item) {
+                                if (_selectMode) {
+                                  app.toggleItemSelection(item.id);
+                                  // Auto-exit select mode when last item deselected
+                                  if (app.selectedItemIds.isEmpty) setState(() => _selectMode = false);
+                                } else {
+                                  setState(() => selectedItem = item);
+                                }
+                              },
+                              onToggleBulk: (id) {
+                                app.toggleItemSelection(id);
+                                if (!_selectMode) setState(() => _selectMode = true);
+                                if (app.selectedItemIds.isEmpty) setState(() => _selectMode = false);
+                              },
+                              onToggleFavourite: (id, value) async {
+                                // Optimistic local update — no full reload, no flash
+                                final idx = loaded.indexWhere((e) => e.id == id);
+                                if (idx != -1) {
+                                  setState(() => loaded[idx] = loaded[idx].copyWith(isFavourite: value));
+                                }
+                                await app.toggleFavourite(id, value);
+                              },
+                              onLongPress: (item) async {
+                                final newVal = !item.isFavourite;
+                                final idx = loaded.indexWhere((e) => e.id == item.id);
+                                if (idx != -1) {
+                                  setState(() => loaded[idx] = loaded[idx].copyWith(isFavourite: newVal));
+                                }
+                                await app.toggleFavourite(item.id, newVal);
+                              },
                               onContextMenu: (gridCtx, item, pos) => _handleContextMenu(gridCtx, item, pos),
                             ),
                       if (_dragging)
@@ -698,7 +757,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               child: Column(mainAxisSize: MainAxisSize.min, children: [
                                 Icon(Icons.file_upload, size: 48, color: Theme.of(context).colorScheme.primary),
                                 const SizedBox(height: 8),
-                                Text('Upuść pliki, aby zaimportować', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+                                Text('Drop files to import', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
                               ]),
                             ),
                           ),
@@ -713,6 +772,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 onImport: _import,
                 onBulk: app.selectedItemIds.isEmpty ? null : _bulkActions,
                 onExportFolder: app.selectedSubcategoryId == null ? null : _exportFolder,
+                selectMode: _selectMode,
+                onToggleSelectMode: () {
+                  setState(() {
+                    _selectMode = !_selectMode;
+                    if (!_selectMode) app.clearItemSelection();
+                  });
+                },
               ),
             ],
           ),
@@ -722,7 +788,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         SizedBox(
           width: 360,
           child: selectedItem == null
-              ? const Center(child: Text('Wybierz element'))
+              ? const Center(child: Text('Select an item'))
               : _DetailsPanel(
                   item: selectedItem!,
                   libraryFilesDir: app.paths!.filesDir,
@@ -864,9 +930,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ListTile(
             contentPadding: const EdgeInsets.only(left: 56),
             leading: const Icon(Icons.add),
-            title: const Text('Dodaj subkategorię'),
+            title: const Text('Add subcategory'),
             onTap: () async {
-              final name = await _promptText('Nazwa subkategorii');
+              final name = await _promptText('Subcategory name');
               if (name == null || name.trim().isEmpty) return;
               await app.createSubcategory(c.id, name.trim());
               await _reload();
@@ -884,7 +950,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (ctx) => AlertDialog(
         title: Text(title),
         content: TextField(controller: ctrl, autofocus: true, decoration: const InputDecoration(border: OutlineInputBorder()), onSubmitted: (v) => Navigator.pop(ctx, v)),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Anuluj')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('OK'))],
       ),
     );
   }
@@ -901,8 +967,16 @@ class _BottomBar extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback? onBulk;
   final VoidCallback? onExportFolder;
+  final bool selectMode;
+  final VoidCallback onToggleSelectMode;
 
-  const _BottomBar({required this.onImport, required this.onBulk, required this.onExportFolder});
+  const _BottomBar({
+    required this.onImport,
+    required this.onBulk,
+    required this.onExportFolder,
+    required this.selectMode,
+    required this.onToggleSelectMode,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -911,14 +985,23 @@ class _BottomBar extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
-          FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Importuj')),
+          FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
           const SizedBox(width: 8),
-          Tooltip(
-            message: 'Long-press files to select for bulk operations',
-            child: OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.select_all), label: Text('Operacje masowe (${app.selectedItemIds.length})')),
+          // Select mode toggle
+          OutlinedButton.icon(
+            onPressed: onToggleSelectMode,
+            icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
+            label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
+            style: selectMode
+                ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
+                : null,
           ),
           const SizedBox(width: 8),
-          OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Eksportuj folder')),
+          if (selectMode && app.selectedItemIds.isNotEmpty)
+            OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
+          if (selectMode && app.selectedItemIds.isNotEmpty)
+            const SizedBox(width: 8),
+          OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
           const Spacer(),
         ],
       ),
@@ -936,8 +1019,12 @@ class _ItemsGrid extends StatelessWidget {
   final String? selectedItemId;
   final Set<String> selectedIds;
   final bool _gifAutoplay;
+  final ScrollController? scrollController;
+  final bool selectMode;
   final void Function(MediaItem item) onSelect;
   final void Function(String id) onToggleBulk;
+  final void Function(String id, bool value) onToggleFavourite;
+  final void Function(MediaItem item) onLongPress;
   final void Function(BuildContext ctx, MediaItem item, Offset globalPosition) onContextMenu;
 
   const _ItemsGrid({
@@ -947,8 +1034,12 @@ class _ItemsGrid extends StatelessWidget {
     required this.selectedItemId,
     required this.selectedIds,
     required bool gifAutoplay,
+    this.scrollController,
+    this.selectMode = false,
     required this.onSelect,
     required this.onToggleBulk,
+    required this.onToggleFavourite,
+    required this.onLongPress,
     required this.onContextMenu,
   }) : _gifAutoplay = gifAutoplay;
 
@@ -956,9 +1047,10 @@ class _ItemsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) return const Center(child: Text('Brak elementów — zaimportuj pliki lub przeciągnij je tutaj'));
+    if (items.isEmpty) return const Center(child: Text('No items — import files or drag them here'));
 
     return GridView.builder(
+      controller: scrollController,
       padding: const EdgeInsets.all(12),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 220,
@@ -979,6 +1071,7 @@ class _ItemsGrid extends StatelessWidget {
         final isGif = _isGif(filePath);
         // Show "no thumbnail" indicator for videos and non-autoplay GIFs without custom thumbnail
         final needsThumbIndicator = (it.type == ItemType.video || (isGif && !_gifAutoplay)) && !hasThumb;
+        final isFavourite = it.isFavourite;
 
         Widget thumb;
         if (isGif && _gifAutoplay) {
@@ -1036,13 +1129,17 @@ class _ItemsGrid extends StatelessWidget {
           onSecondaryTapDown: (details) => onContextMenu(ctx, it, details.globalPosition),
           child: InkWell(
             onTap: () => onSelect(it),
-            onLongPress: () => onToggleBulk(it.id),
+            onLongPress: () => onLongPress(it),
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  width: isSelected ? 2 : 1,
-                  color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).dividerColor,
+                  width: (isSelected || isBulk) ? 2 : 1,
+                  color: isBulk
+                      ? Theme.of(context).colorScheme.primary
+                      : isSelected
+                          ? Theme.of(context).colorScheme.secondary
+                          : Theme.of(context).dividerColor,
                 ),
                 color: Theme.of(context).colorScheme.surface,
               ),
@@ -1099,8 +1196,37 @@ class _ItemsGrid extends StatelessWidget {
                           child: const Text('DUP', style: TextStyle(color: Colors.white, fontSize: 12)),
                         ),
                       ),
-                    if (isBulk)
-                      Positioned(left: 8, top: 8, child: Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary)),
+                    // Heart overlay — display only, long-press to toggle
+                    if (!selectMode && isFavourite)
+                      Positioned(
+                        right: 8, top: 8,
+                        child: Container(
+                          width: 28, height: 28,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black.withOpacity(0.45),
+                          ),
+                          child: const Icon(Icons.favorite, size: 16, color: Colors.redAccent),
+                        ),
+                      ),
+                    // Checkbox overlay in select mode
+                    if (selectMode)
+                      Positioned(
+                        left: 8, top: 8,
+                        child: Container(
+                          width: 24, height: 24,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isBulk
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.black.withOpacity(0.4),
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: isBulk
+                              ? const Icon(Icons.check, size: 14, color: Colors.white)
+                              : null,
+                        ),
+                      ),
                   ])),
                   Padding(
                     padding: const EdgeInsets.all(10),
@@ -1237,30 +1363,30 @@ class _DetailsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Szczegóły', style: Theme.of(context).textTheme.titleMedium),
+          Text('Details', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Expanded(child: preview),
           const SizedBox(height: 12),
           Text(item.originalName, style: Theme.of(context).textTheme.bodyLarge),
           const SizedBox(height: 6),
           Text('SHA256: ${item.sha256.substring(0, 12)}…'),
-          if (item.isDuplicate) Text('Duplikat (powiązany: ${item.duplicateOfId ?? "?"})'),
+          if (item.isDuplicate) Text('Duplicate (linked: ${item.duplicateOfId ?? "?"})'),
           const SizedBox(height: 10),
-          FilledButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new), label: const Text('Otwórz w systemie')),
+          FilledButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new), label: const Text('Open in system')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download), label: const Text('Eksportuj na dysk')),
+          OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download), label: const Text('Export to disk')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onMove, icon: const Icon(Icons.drive_file_move), label: const Text('Przenieś')),
+          OutlinedButton.icon(onPressed: onMove, icon: const Icon(Icons.drive_file_move), label: const Text('Move')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell), label: const Text('Tagi')),
+          OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell), label: const Text('Tags')),
           const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete), label: const Text('Usuń')),
+          OutlinedButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete), label: const Text('Delete')),
           const SizedBox(height: 10),
           FutureBuilder<List<Tag>>(
             future: loadTags(),
             builder: (ctx, snap) {
               final tags = snap.data ?? const <Tag>[];
-              if (tags.isEmpty) return const Text('Brak tagów');
+              if (tags.isEmpty) return const Text('No tags');
               return Wrap(spacing: 6, runSpacing: 6, children: [for (final t in tags) Chip(label: Text(t.name))]);
             },
           ),
