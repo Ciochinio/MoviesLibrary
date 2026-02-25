@@ -375,55 +375,23 @@ class ThumbnailService {
     }
   }
 
-  /// Get video width and height in pixels using ffprobe.
-  /// Returns null if ffprobe is unavailable or the file can't be probed.
-  Future<({int width, int height})?> getVideoDimensions(String videoPath) async {
-    final probe = await _resolveFfprobe();
-    if (probe == null) return null;
-    try {
-      final result = await Process.run(probe, [
-        '-v', 'error',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=width,height',
-        '-of', 'csv=p=0',
-        videoPath,
-      ]);
-      if (result.exitCode != 0) return null;
-      final parts = (result.stdout as String).trim().split(',');
-      if (parts.length < 2) return null;
-      final w = int.tryParse(parts[0].trim());
-      final h = int.tryParse(parts[1].trim());
-      if (w == null || h == null || w == 0 || h == 0) return null;
-      return (width: w, height: h);
-    } catch (_) {
-      return null;
-    }
-  }
-
   /// Extract a single frame at a given timestamp (seconds) to a destination file.
-  /// [cropFilter] is an optional ffmpeg vf crop expression appended after scale,
-  /// e.g. "crop=iw:iw*9/16:0:150" — used for vertical video horizontal strip crops.
   Future<bool> extractFrame({
     required String videoPath,
     required double timestampSeconds,
     required String outputPath,
     int width = 320,
-    String? cropFilter,
   }) async {
     final ff = await _resolveFfmpeg();
     if (ff == null) return false;
     try {
       await File(outputPath).parent.create(recursive: true);
-      // Build filter: scale first, then optional crop
-      final vf = cropFilter != null
-          ? 'scale=$width:-1,$cropFilter'
-          : 'scale=$width:-1';
       final result = await Process.run(ff, [
         '-y',
         '-ss', timestampSeconds.toStringAsFixed(2),
         '-i', videoPath,
         '-vframes', '1',
-        '-vf', vf,
+        '-vf', 'scale=$width:-1',
         '-q:v', '3',
         outputPath,
       ]);
@@ -434,14 +402,7 @@ class ThumbnailService {
   }
 
   /// Extract 9 frames at random(ish) time positions for the 3x3 picker.
-  ///
-  /// For vertical videos (height > width after scaling), each frame is additionally
-  /// cropped to a random horizontal strip so the picker shows varied vertical regions
-  /// rather than always the centre. The crop is baked into the saved file.
-  ///
-  /// Returns list of temp file paths. Caller must clean up.
-  /// Also returns the crop filter used per frame so the caller can reuse it when
-  /// saving the chosen frame as the final thumbnail.
+  /// Returns full frames — no cropping. Caller must clean up temp files.
   Future<List<({String path, String? cropFilter})>> extract9Frames({
     required String videoPath,
     required String tempDir,
@@ -449,21 +410,6 @@ class ThumbnailService {
   }) async {
     final duration = await getVideoDuration(videoPath);
     if (duration == null || duration < 1.0) return [];
-
-    // Detect if vertical — probe original dimensions
-    final dims = await getVideoDimensions(videoPath);
-    final isVertical = dims != null && dims.height > dims.width;
-
-    // For vertical videos, compute strip height in the *scaled* coordinate space.
-    // After scale=outputWidth:-1, the scaled height ≈ outputWidth * (origH/origW).
-    // We want a strip of height = outputWidth * (9/16) — a landscape-ish ratio.
-    int? scaledHeight;
-    int? stripHeight;
-    if (isVertical && dims != null) {
-      scaledHeight = (outputWidth * dims.height / dims.width).round();
-      // Strip height: wide aspect ratio (16:9 equivalent of outputWidth)
-      stripHeight = (outputWidth * 9 / 16).round().clamp(1, scaledHeight);
-    }
 
     final rng = Random();
     final segmentLength = duration / 9;
@@ -478,24 +424,14 @@ class ThumbnailService {
           ? minT + rng.nextDouble() * (maxT - minT)
           : segStart + segmentLength / 2;
 
-      // Random vertical crop offset for vertical videos
-      String? cropFilter;
-      if (isVertical && scaledHeight != null && stripHeight != null) {
-        final maxY = scaledHeight - stripHeight;
-        final y = maxY > 0 ? rng.nextInt(maxY) : 0;
-        // crop=w:h:x:y  — full width, strip height, from top-left
-        cropFilter = 'crop=iw:$stripHeight:0:$y';
-      }
-
       final outPath = p.join(tempDir, 'frame_$i.jpg');
       final ok = await extractFrame(
         videoPath: videoPath,
         timestampSeconds: t.clamp(0.1, duration - 0.1),
         outputPath: outPath,
         width: outputWidth,
-        cropFilter: cropFilter,
       );
-      if (ok) frames.add((path: outPath, cropFilter: cropFilter));
+      if (ok) frames.add((path: outPath, cropFilter: null));
     }
 
     return frames;

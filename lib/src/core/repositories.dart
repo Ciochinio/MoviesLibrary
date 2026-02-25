@@ -848,11 +848,15 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
           // Only delete after DB commit below.
         }
 
-        // 2) Update DB (subcategory_id + stored_rel_path)
+        // 2) Update DB (subcategory_id + stored_rel_path + created_at reset so item sorts as newest)
         try {
           await db.update(
             'items',
-            {'subcategory_id': newSubcategoryId, 'stored_rel_path': newRel},
+            {
+              'subcategory_id': newSubcategoryId,
+              'stored_rel_path': newRel,
+              'created_at': DateTime.now().millisecondsSinceEpoch,
+            },
             where: 'id=?',
             whereArgs: [item.id],
           );

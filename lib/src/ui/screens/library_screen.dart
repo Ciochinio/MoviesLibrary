@@ -65,6 +65,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   // Untagged indicator — set of item IDs with zero tags
   Set<String> _untaggedIds = {};
 
+  // Thumbnail version counters — incremented when thumbnail changes to bust Flutter's image cache
+  final Map<String, int> _thumbVersions = {};
+
   @override
   void dispose() {
     _gridScrollController.dispose();
@@ -604,37 +607,53 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (!mounted) return;
 
-    // Show 3x3 grid picker — use BoxFit.contain so cropped strips show fully
+    // Detect orientation from the first extracted frame to size cells appropriately
+    double cellAspectRatio = 16 / 9; // default: landscape
+    double dialogWidth = 660;
+    try {
+      final firstBytes = await File(frames!.first.path).readAsBytes();
+      final codec = await ui.instantiateImageCodec(firstBytes);
+      final frameInfo = await codec.getNextFrame();
+      final fw = frameInfo.image.width;
+      final fh = frameInfo.image.height;
+      codec.dispose();
+      if (fh > fw) {
+        // Vertical content — portrait cells, narrower dialog
+        cellAspectRatio = fw / fh;
+        dialogWidth = 400;
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    // Show 3x3 grid picker — no fixed height, dialog sizes to content (no scroll)
     final chosenIndex = await showDialog<int>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Choose thumbnail'),
         content: SizedBox(
-          width: 520,
-          height: 520,
+          width: dialogWidth,
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               const Text('Click a frame to set it as thumbnail'),
               const SizedBox(height: 12),
-              Expanded(
-                child: GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8,
-                    childAspectRatio: 16 / 9,
-                  ),
-                  itemCount: frames!.length,
-                  itemBuilder: (_, i) => InkWell(
-                    onTap: () => Navigator.pop(ctx, i),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: ColoredBox(
-                        color: Colors.black,
-                        child: Image.file(
-                          File(frames![i].path),
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image, color: Colors.white)),
-                        ),
-                      ),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8,
+                  childAspectRatio: cellAspectRatio,
+                ),
+                itemCount: frames!.length,
+                itemBuilder: (_, i) => InkWell(
+                  onTap: () => Navigator.pop(ctx, i),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(frames![i].path),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image)),
                     ),
                   ),
                 ),
@@ -658,10 +677,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: chosen.path);
       if (!mounted) return;
       if (ok) {
-        // Evict Flutter's image cache so the grid shows the new thumbnail immediately
+        // Bust Flutter's image cache for this specific thumbnail by evicting
+        // AND incrementing the version counter (forces a new cache key in the grid)
         final thumbPath = p.join(app.paths!.thumbsDir.path, '${item.id}.jpg');
         await FileImage(File(thumbPath)).evict();
-        await _reload();
+        imageCache.clear();
+        imageCache.clearLiveImages();
+        setState(() => _thumbVersions[item.id] = (_thumbVersions[item.id] ?? 0) + 1);
       }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
     }
@@ -680,11 +702,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: result.files.first.path!);
     if (!mounted) return;
     if (ok) {
-      // Evict Flutter's image cache then reload so the grid refreshes immediately
+      // Bust Flutter's image cache for this specific thumbnail
       final appState = context.read<AppState>();
       final thumbPath = p.join(appState.paths!.thumbsDir.path, '${item.id}.jpg');
       await FileImage(File(thumbPath)).evict();
-      await _reload();
+      imageCache.clear();
+      imageCache.clearLiveImages();
+      setState(() => _thumbVersions[item.id] = (_thumbVersions[item.id] ?? 0) + 1);
     }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
   }
@@ -785,7 +809,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       children: [
         // ─── Sidebar ─────────────────
         SizedBox(
-          width: 280,
+          width: 240,
           child: Column(
             children: [
               Padding(
@@ -832,6 +856,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               showTypeMarkers: app.settings.showTypeMarkers,
                               showUntaggedIndicator: app.settings.showUntaggedIndicator,
                               untaggedIds: _untaggedIds,
+                              thumbVersions: _thumbVersions,
                               onSelect: (item) {
                                 if (_selectMode) {
                                   app.toggleItemSelection(item.id);
@@ -925,7 +950,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         const VerticalDivider(width: 1),
         // ─── Details panel ───────────
         SizedBox(
-          width: 360,
+          width: 280,
           child: selectedItem == null
               ? const Center(child: Text('Select an item'))
               : _DetailsPanel(
@@ -1140,37 +1165,47 @@ class _BottomBar extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: onToggleSelectMode,
-            icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
-            label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
-            style: selectMode
-                ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
-                : null,
+          // ─── Left group: import / select / actions / export ───
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: onToggleSelectMode,
+                icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
+                label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
+                style: selectMode
+                    ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
+                    : null,
+              ),
+              if (selectMode && app.selectedItemIds.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
+              ],
+              const SizedBox(width: 8),
+              OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
+            ],
           ),
-          const SizedBox(width: 8),
-          if (selectMode && app.selectedItemIds.isNotEmpty)
-            OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
-          if (selectMode && app.selectedItemIds.isNotEmpty)
-            const SizedBox(width: 8),
-          OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
-          const Spacer(),
-          // ─── Sort dropdown ───
-          _SortButton(
-            label: sortLabel,
-            sortField: sortField,
-            sortAscending: sortAscending,
-            onChanged: onSortChanged,
-          ),
-          const SizedBox(width: 8),
-          // ─── Type filter dropdown ───
-          _TypeFilterButton(
-            label: filterLabel,
-            selected: typeFilters,
-            onChanged: onTypeFilterChanged,
+          // ─── Right group: sort / filter ───
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _SortButton(
+                label: sortLabel,
+                sortField: sortField,
+                sortAscending: sortAscending,
+                onChanged: onSortChanged,
+              ),
+              const SizedBox(width: 8),
+              _TypeFilterButton(
+                label: filterLabel,
+                selected: typeFilters,
+                onChanged: onTypeFilterChanged,
+              ),
+            ],
           ),
         ],
       ),
@@ -1292,6 +1327,7 @@ class _ItemsGrid extends StatelessWidget {
   final bool showTypeMarkers;
   final bool showUntaggedIndicator;
   final Set<String> untaggedIds;
+  final Map<String, int> thumbVersions;
   final void Function(MediaItem item) onSelect;
   final void Function(String id) onToggleBulk;
   final void Function(String id, bool value) onToggleFavourite;
@@ -1310,6 +1346,7 @@ class _ItemsGrid extends StatelessWidget {
     this.showTypeMarkers = true,
     this.showUntaggedIndicator = true,
     this.untaggedIds = const {},
+    this.thumbVersions = const {},
     required this.onSelect,
     required this.onToggleBulk,
     required this.onToggleFavourite,
@@ -1327,8 +1364,8 @@ class _ItemsGrid extends StatelessWidget {
       controller: scrollController,
       padding: const EdgeInsets.all(12),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 220,
-        mainAxisExtent: 190,
+        maxCrossAxisExtent: 200,
+        mainAxisExtent: 175,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
       ),
@@ -1355,10 +1392,19 @@ class _ItemsGrid extends StatelessWidget {
             child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
           );
         } else if (hasThumb) {
-          // Custom thumbnail (set by user for videos or GIFs)
+          // Custom thumbnail — use version counter as cache key so new thumbs show immediately
+          final version = thumbVersions[it.id] ?? 0;
           thumb = ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.file(thumbFile, fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48)),
+            child: ColoredBox(
+              color: Colors.black,
+              child: Image(
+                key: ValueKey('${it.id}_thumb_$version'),
+                image: ResizeImage(FileImage(thumbFile), width: 320),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48, color: Colors.white),
+              ),
+            ),
           );
         } else if (it.type == ItemType.image) {
           if (isGif) {
