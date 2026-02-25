@@ -637,6 +637,21 @@ class ItemRepo {
     return rows.map((r) => _rowToItem(r.cast<String, Object?>())).toList();
   }
 
+  /// Returns the set of item IDs (from the given list) that have zero tags.
+  /// Used by the grid to show the untagged dot indicator without N+1 queries.
+  Future<Set<String>> listUntaggedItemIds(List<String> itemIds) async {
+    if (itemIds.isEmpty) return {};
+    final placeholders = List.filled(itemIds.length, '?').join(',');
+    final sql = '''
+      SELECT id FROM items
+      WHERE id IN ($placeholders)
+      AND NOT EXISTS (SELECT 1 FROM item_tags WHERE item_id = items.id)
+      AND NOT EXISTS (SELECT 1 FROM item_tag_key_values WHERE item_id = items.id)
+    ''';
+    final rows = await db.rawQuery(sql, itemIds);
+    return rows.map((r) => r['id'] as String).toSet();
+  }
+
   /// Count items in a subcategory that have no tags at all (simple tags + custom tags)
   Future<int> countUntaggedItems(String subcategoryId) async {
     final sql = '''

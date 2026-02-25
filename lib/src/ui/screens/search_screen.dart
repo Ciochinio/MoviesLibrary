@@ -13,6 +13,29 @@ import '../../core/thumbnail_service.dart';
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/tag_filter_panel.dart';
 
+// ── Sort / Filter enums (mirrored from library_screen) ────────────────────
+enum _SortField { dateAdded, name, size, fileType }
+enum _TypeFilter { all, image, gif, video, other }
+
+extension _SortFieldLabel on _SortField {
+  String get label => switch (this) {
+        _SortField.dateAdded => 'Date Added',
+        _SortField.name => 'Name',
+        _SortField.size => 'Size',
+        _SortField.fileType => 'File Type',
+      };
+}
+
+extension _TypeFilterLabel on _TypeFilter {
+  String get label => switch (this) {
+        _TypeFilter.all => 'All',
+        _TypeFilter.image => 'Image',
+        _TypeFilter.gif => 'GIF',
+        _TypeFilter.video => 'Video',
+        _TypeFilter.other => 'Other',
+      };
+}
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -29,6 +52,14 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _showFilterPanel = false;
   List<MediaItem> _results = const [];
   MediaItem? _selected;
+
+  // Sort & filter — session only
+  _SortField _sortField = _SortField.dateAdded;
+  bool _sortAscending = false;
+  final Set<_TypeFilter> _typeFilters = {};
+
+  // Untagged indicator
+  Set<String> _untaggedIds = {};
 
   @override
   void dispose() {
@@ -52,8 +83,16 @@ class _SearchScreenState extends State<SearchScreen> {
         filename: _filenameController.text.trim().isNotEmpty ? _filenameController.text.trim() : null,
       );
       if (!mounted) return;
+
+      // Fetch untagged IDs in one bulk query
+      Set<String> untagged = {};
+      if (app.settings.showUntaggedIndicator && res.isNotEmpty) {
+        untagged = await app.items!.listUntaggedItemIds(res.map((e) => e.id).toList());
+      }
+
       setState(() {
         _results = res;
+        _untaggedIds = untagged;
       });
     } finally {
       if (mounted) {
@@ -69,6 +108,10 @@ class _SearchScreenState extends State<SearchScreen> {
       _filenameController.clear();
       _results = const [];
       _selected = null;
+      _untaggedIds = {};
+      _sortField = _SortField.dateAdded;
+      _sortAscending = false;
+      _typeFilters.clear();
     });
   }
 
@@ -119,9 +162,59 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  // ── Sort & Filter helpers ───────────────────────────────────────────────
+
+  bool _isGifPath(String relPath) => p.extension(relPath).toLowerCase() == '.gif';
+
+  _TypeFilter _typeFilterOf(MediaItem item) {
+    if (item.type == ItemType.video) return _TypeFilter.video;
+    if (item.type == ItemType.image) {
+      if (_isGifPath(item.storedRelPath)) return _TypeFilter.gif;
+      return _TypeFilter.image;
+    }
+    return _TypeFilter.other;
+  }
+
+  int _fileTypeOrder(_TypeFilter f) => switch (f) {
+        _TypeFilter.video => 0,
+        _TypeFilter.gif => 1,
+        _TypeFilter.image => 2,
+        _TypeFilter.other => 3,
+        _TypeFilter.all => 4,
+      };
+
+  List<MediaItem> _applyFiltersAndSort(List<MediaItem> items) {
+    var result = items;
+
+    if (_typeFilters.isNotEmpty) {
+      result = result.where((item) => _typeFilters.contains(_typeFilterOf(item))).toList();
+    }
+
+    result = List.of(result);
+    result.sort((a, b) {
+      int cmp;
+      switch (_sortField) {
+        case _SortField.dateAdded:
+          cmp = a.createdAt.compareTo(b.createdAt);
+        case _SortField.name:
+          cmp = a.originalName.toLowerCase().compareTo(b.originalName.toLowerCase());
+        case _SortField.size:
+          cmp = a.sizeBytes.compareTo(b.sizeBytes);
+        case _SortField.fileType:
+          cmp = _fileTypeOrder(_typeFilterOf(a)).compareTo(_fileTypeOrder(_typeFilterOf(b)));
+      }
+      return _sortAscending ? cmp : -cmp;
+    });
+
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    final displayItems = _applyFiltersAndSort(_results);
+    final filterLabel = _typeFilters.isEmpty ? 'All' : _typeFilters.map((f) => f.label).join(', ');
+    final sortLabel = '${_sortField.label} ${_sortAscending ? '↑' : '↓'}';
 
     return Row(
       children: [
@@ -223,16 +316,60 @@ class _SearchScreenState extends State<SearchScreen> {
                   children: [
                     Expanded(
                       flex: 2,
-                      child: _loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _ItemsGrid(
-                              items: _results,
-                              libraryFilesDir: app.paths!.filesDir,
-                              thumbsDir: app.paths!.thumbsDir,
-                              gifAutoplay: app.settings.gifAutoplay,
-                              selectedItemId: _selected?.id,
-                              onSelect: (item) => setState(() => _selected = item),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: _loading
+                                ? const Center(child: CircularProgressIndicator())
+                                : _ItemsGrid(
+                                    items: displayItems,
+                                    libraryFilesDir: app.paths!.filesDir,
+                                    thumbsDir: app.paths!.thumbsDir,
+                                    gifAutoplay: app.settings.gifAutoplay,
+                                    selectedItemId: _selected?.id,
+                                    showTypeMarkers: app.settings.showTypeMarkers,
+                                    showUntaggedIndicator: app.settings.showUntaggedIndicator,
+                                    untaggedIds: _untaggedIds,
+                                    onSelect: (item) => setState(() => _selected = item),
+                                  ),
+                          ),
+                          // ─── Sort / Filter bottom bar ───────────────────
+                          if (_results.isNotEmpty) ...[
+                            const Divider(height: 1),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Text('${displayItems.length} result${displayItems.length == 1 ? '' : 's'}',
+                                      style: Theme.of(context).textTheme.bodySmall),
+                                  const Spacer(),
+                                  // Sort dropdown
+                                  _SortButton(
+                                    label: sortLabel,
+                                    sortField: _sortField,
+                                    sortAscending: _sortAscending,
+                                    onChanged: (field, asc) => setState(() {
+                                      _sortField = field;
+                                      _sortAscending = asc;
+                                    }),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Type filter dropdown
+                                  _TypeFilterButton(
+                                    label: filterLabel,
+                                    selected: _typeFilters,
+                                    onChanged: (filters) => setState(() {
+                                      _typeFilters.clear();
+                                      _typeFilters.addAll(filters);
+                                    }),
+                                  ),
+                                ],
+                              ),
                             ),
+                          ],
+                        ],
+                      ),
                     ),
                     if (_selected != null) ...[
                       const VerticalDivider(width: 1),
@@ -270,13 +407,13 @@ class _SearchScreenState extends State<SearchScreen> {
                             final app = context.read<AppState>();
                             final currentSimple = await app.items!.listTagIdsForItem(_selected!.id);
                             final currentKV = await app.items!.listKeyValueIdsForItem(_selected!.id);
-                            
+
                             final picked = await showTagManagerDialog(
                               context,
                               initialSimpleTagIds: currentSimple,
                               initialKeyValueIds: currentKV,
                             );
-                            
+
                             if (picked != null) {
                               final toAdd = picked.simpleTagIds.difference(currentSimple);
                               final toRemove = currentSimple.difference(picked.simpleTagIds);
@@ -286,7 +423,7 @@ class _SearchScreenState extends State<SearchScreen> {
                               for (final id in toRemove) {
                                 await app.items!.removeTagFromItem(_selected!.id, id);
                               }
-                              
+
                               final kvToAdd = picked.keyValueIds.difference(currentKV);
                               final kvToRemove = currentKV.difference(picked.keyValueIds);
                               for (final id in kvToAdd) {
@@ -295,10 +432,10 @@ class _SearchScreenState extends State<SearchScreen> {
                               for (final id in kvToRemove) {
                                 await app.items!.removeKeyValueFromItem(_selected!.id, id);
                               }
-                              
+
                               await app.items!.writeSidecarForItemId(_selected!.id);
                             }
-                            
+
                             setState(() {});
                           },
                           onDelete: () async {
@@ -394,12 +531,115 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
+// ──────────────────────────────────────────────
+// Sort / Filter buttons (reused in search bottom bar)
+// ──────────────────────────────────────────────
+
+class _SortButton extends StatelessWidget {
+  final String label;
+  final _SortField sortField;
+  final bool sortAscending;
+  final void Function(_SortField, bool) onChanged;
+
+  const _SortButton({
+    required this.label,
+    required this.sortField,
+    required this.sortAscending,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      builder: (context, controller, child) => OutlinedButton.icon(
+        onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+        icon: const Icon(Icons.sort, size: 16),
+        label: Text('Sort: $label', style: const TextStyle(fontSize: 12)),
+      ),
+      menuChildren: [
+        for (final field in _SortField.values)
+          MenuItemButton(
+            leadingIcon: sortField == field
+                ? Icon(sortAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 16)
+                : const SizedBox(width: 16),
+            onPressed: () {
+              if (sortField == field) {
+                onChanged(field, !sortAscending);
+              } else {
+                onChanged(field, false);
+              }
+            },
+            child: Text(field.label),
+          ),
+      ],
+    );
+  }
+}
+
+class _TypeFilterButton extends StatelessWidget {
+  final String label;
+  final Set<_TypeFilter> selected;
+  final void Function(Set<_TypeFilter>) onChanged;
+
+  const _TypeFilterButton({
+    required this.label,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      builder: (context, controller, child) => OutlinedButton.icon(
+        onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+        icon: const Icon(Icons.filter_list, size: 16),
+        label: Text('Filter: $label', style: const TextStyle(fontSize: 12)),
+        style: selected.isNotEmpty
+            ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
+            : null,
+      ),
+      menuChildren: [
+        MenuItemButton(
+          leadingIcon: selected.isEmpty
+              ? const Icon(Icons.check, size: 16)
+              : const SizedBox(width: 16),
+          onPressed: () => onChanged({}),
+          child: const Text('All'),
+        ),
+        const Divider(height: 1),
+        for (final filter in [_TypeFilter.image, _TypeFilter.gif, _TypeFilter.video, _TypeFilter.other])
+          MenuItemButton(
+            leadingIcon: selected.contains(filter)
+                ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.primary)
+                : const SizedBox(width: 16),
+            onPressed: () {
+              final next = Set<_TypeFilter>.from(selected);
+              if (next.contains(filter)) {
+                next.remove(filter);
+              } else {
+                next.add(filter);
+              }
+              onChanged(next);
+            },
+            child: Text(filter.label),
+          ),
+      ],
+    );
+  }
+}
+
+// ──────────────────────────────────────────────
+// Items Grid
+// ──────────────────────────────────────────────
 class _ItemsGrid extends StatelessWidget {
   final List<MediaItem> items;
   final Directory libraryFilesDir;
   final Directory thumbsDir;
   final bool gifAutoplay;
   final String? selectedItemId;
+  final bool showTypeMarkers;
+  final bool showUntaggedIndicator;
+  final Set<String> untaggedIds;
   final void Function(MediaItem item) onSelect;
 
   const _ItemsGrid({
@@ -408,6 +648,9 @@ class _ItemsGrid extends StatelessWidget {
     required this.thumbsDir,
     required this.gifAutoplay,
     required this.selectedItemId,
+    this.showTypeMarkers = true,
+    this.showUntaggedIndicator = true,
+    this.untaggedIds = const {},
     required this.onSelect,
   });
 
@@ -452,19 +695,11 @@ class _ItemsGrid extends StatelessWidget {
                 errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48)),
           );
         } else if (it.type == ItemType.image) {
-          if (isGif) {
-            thumb = ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-            );
-          } else {
-            thumb = ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-            );
-          }
+          thumb = ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
+                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
+          );
         } else if (it.type == ItemType.video) {
           thumb = Container(
             decoration: BoxDecoration(
@@ -501,29 +736,11 @@ class _ItemsGrid extends StatelessWidget {
                   child: Stack(
                     children: [
                       Positioned.fill(child: thumb),
-                      // Video badge
-                      if (it.type == ItemType.video && hasThumb)
+                      // ── Type marker badge (bottom-right) ────────────────
+                      if (showTypeMarkers)
                         Positioned(
                           right: 8, bottom: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
-                            child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                              Icon(Icons.play_arrow, size: 14, color: Colors.white),
-                              SizedBox(width: 2),
-                              Text('Video', style: TextStyle(color: Colors.white, fontSize: 10)),
-                            ]),
-                          ),
-                        ),
-                      // GIF badge
-                      if (isGif && hasThumb)
-                        Positioned(
-                          right: 8, bottom: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
-                            child: const Text('GIF', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                          ),
+                          child: _TypeBadge(item: it, isGif: isGif, hasThumb: hasThumb),
                         ),
                       // ! indicator for videos/GIFs without thumbnail
                       if (needsThumbIndicator)
@@ -533,6 +750,19 @@ class _ItemsGrid extends StatelessWidget {
                             width: 22, height: 22,
                             decoration: BoxDecoration(color: Colors.orange.withOpacity(0.9), shape: BoxShape.circle),
                             child: const Center(child: Text('!', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold))),
+                          ),
+                        ),
+                      // ── Untagged dot (top-left) ──────────────────────────
+                      if (showUntaggedIndicator && untaggedIds.contains(it.id))
+                        Positioned(
+                          left: 8, top: 8,
+                          child: Container(
+                            width: 10, height: 10,
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade600,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 1.5),
+                            ),
                           ),
                         ),
                       if (it.isDuplicate)
@@ -557,6 +787,49 @@ class _ItemsGrid extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+// ──────────────────────────────────────────────
+// Type Badge widget
+// ──────────────────────────────────────────────
+class _TypeBadge extends StatelessWidget {
+  final MediaItem item;
+  final bool isGif;
+  final bool hasThumb;
+
+  const _TypeBadge({required this.item, required this.isGif, required this.hasThumb});
+
+  @override
+  Widget build(BuildContext context) {
+    if (item.type == ItemType.video) {
+      if (!hasThumb) return const SizedBox.shrink();
+      return _badge(
+        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.play_arrow, size: 14, color: Colors.white),
+          SizedBox(width: 2),
+          Text('Video', style: TextStyle(color: Colors.white, fontSize: 10)),
+        ]),
+      );
+    }
+    if (isGif) {
+      return _badge(child: const Text('GIF', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)));
+    }
+    if (item.type == ItemType.image) {
+      return _badge(child: const Text('Image', style: TextStyle(color: Colors.white, fontSize: 10)));
+    }
+    return _badge(child: const Text('Other', style: TextStyle(color: Colors.white, fontSize: 10)));
+  }
+
+  Widget _badge({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.7),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: child,
     );
   }
 }

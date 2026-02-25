@@ -71,7 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final lib = app.paths?.libraryDir.path ?? '(brak)';
+    final lib = app.paths?.libraryDir.path ?? '(none)';
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -83,13 +83,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ─── Import mode ───
           Card(
             child: ListTile(
-              title: const Text('Tryb importu'),
+              title: const Text('Import mode'),
               subtitle: Text(app.settings.importMode == ImportMode.copy
-                  ? 'Kopiuj do /Library/files'
-                  : 'Move to /Library/files'),
+                  ? 'Copy files to /Library/files'
+                  : 'Move files to /Library/files'),
               trailing: SegmentedButton<ImportMode>(
                 segments: const [
-                  ButtonSegment(value: ImportMode.copy, label: Text('Kopiuj')),
+                  ButtonSegment(value: ImportMode.copy, label: Text('Copy')),
                   ButtonSegment(value: ImportMode.move, label: Text('Move')),
                 ],
                 selected: {app.settings.importMode},
@@ -102,7 +102,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ─── Confirm delete ───
           Card(
             child: SwitchListTile(
-              title: const Text('Pytaj przy usuwaniu'),
+              title: const Text('Confirm before deleting'),
               subtitle: const Text('If disabled, deletion will proceed without confirmation.'),
               value: app.settings.confirmDelete,
               onChanged: (v) => context.read<AppState>().setConfirmDelete(v),
@@ -117,6 +117,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: const Text('Enable animated GIF playback in the grid. Disable for better performance.'),
               value: app.settings.gifAutoplay,
               onChanged: (v) => context.read<AppState>().setGifAutoplay(v),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── Type markers ───
+          Card(
+            child: SwitchListTile(
+              title: const Text('Show type markers'),
+              subtitle: const Text('Show Image / GIF / Video / Other badge on each grid item.'),
+              value: app.settings.showTypeMarkers,
+              onChanged: (v) => context.read<AppState>().setShowTypeMarkers(v),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── Untagged indicator ───
+          Card(
+            child: SwitchListTile(
+              title: const Text('Show untagged indicator'),
+              subtitle: const Text('Show a dot on grid items that have no tags assigned.'),
+              value: app.settings.showUntaggedIndicator,
+              onChanged: (v) => context.read<AppState>().setShowUntaggedIndicator(v),
             ),
           ),
           const SizedBox(height: 12),

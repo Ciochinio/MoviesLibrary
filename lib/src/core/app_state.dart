@@ -533,6 +533,18 @@ Future<void> setGifAutoplay(bool value) async {
   notifyListeners();
 }
 
+Future<void> setShowTypeMarkers(bool value) async {
+  settings = settings.copyWith(showTypeMarkers: value);
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
+Future<void> setShowUntaggedIndicator(bool value) async {
+  settings = settings.copyWith(showUntaggedIndicator: value);
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
   Future<void> toggleFavourite(String itemId, bool value) async {
     if (!isReady) return;
     await items!.toggleFavourite(itemId, value);
