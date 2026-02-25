@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -24,7 +25,7 @@ class LibraryScreen extends StatefulWidget {
 }
 
 // ── Sort / Filter enums ────────────────────────────────────────────────────
-enum _SortField { dateAdded, name, size, fileType }
+enum _SortField { dateAdded, name, size, fileType, random }
 enum _TypeFilter { all, image, gif, video, other }
 
 extension _SortFieldLabel on _SortField {
@@ -33,6 +34,7 @@ extension _SortFieldLabel on _SortField {
         _SortField.name => 'Name',
         _SortField.size => 'Size',
         _SortField.fileType => 'File Type',
+        _SortField.random => 'Random',
       };
 }
 
@@ -58,6 +60,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   _SortField _sortField = _SortField.dateAdded;
   bool _sortAscending = false;
   final Set<_TypeFilter> _typeFilters = {};
+  int _shuffleSeed = 0; // stable random order within a session
 
   // Untagged indicator — set of item IDs with zero tags
   Set<String> _untaggedIds = {};
@@ -105,20 +108,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     // Apply sort
     result = List.of(result);
-    result.sort((a, b) {
-      int cmp;
-      switch (_sortField) {
-        case _SortField.dateAdded:
-          cmp = a.createdAt.compareTo(b.createdAt);
-        case _SortField.name:
-          cmp = a.originalName.toLowerCase().compareTo(b.originalName.toLowerCase());
-        case _SortField.size:
-          cmp = a.sizeBytes.compareTo(b.sizeBytes);
-        case _SortField.fileType:
-          cmp = _fileTypeOrder(_typeFilterOf(a)).compareTo(_fileTypeOrder(_typeFilterOf(b)));
-      }
-      return _sortAscending ? cmp : -cmp;
-    });
+    if (_sortField == _SortField.random) {
+      result.shuffle(Random(_shuffleSeed));
+    } else {
+      result.sort((a, b) {
+        int cmp;
+        switch (_sortField) {
+          case _SortField.dateAdded:
+            cmp = a.createdAt.compareTo(b.createdAt);
+          case _SortField.name:
+            cmp = a.originalName.toLowerCase().compareTo(b.originalName.toLowerCase());
+          case _SortField.size:
+            cmp = a.sizeBytes.compareTo(b.sizeBytes);
+          case _SortField.fileType:
+            cmp = _fileTypeOrder(_typeFilterOf(a)).compareTo(_fileTypeOrder(_typeFilterOf(b)));
+          case _SortField.random:
+            cmp = 0; // handled above
+        }
+        return _sortAscending ? cmp : -cmp;
+      });
+    }
 
     return result;
   }
@@ -569,14 +578,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final tempDir = Directory(p.join(Directory.systemTemp.path, 'libthumb_${item.id}_$sessionId'));
     await tempDir.create(recursive: true);
 
-    List<String>? framePaths;
+    List<({String path, String? cropFilter})>? frames;
 
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
         Future.microtask(() async {
-          framePaths = await thumbService.extract9Frames(videoPath: filePath, tempDir: tempDir.path);
+          frames = await thumbService.extract9Frames(videoPath: filePath, tempDir: tempDir.path);
           if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
         });
         return const AlertDialog(
@@ -586,7 +595,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       },
     );
 
-    if (framePaths == null || framePaths!.isEmpty) {
+    if (frames == null || frames!.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not extract frames.')));
       _cleanupTempDir(tempDir);
@@ -595,8 +604,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (!mounted) return;
 
-    // Show 3x3 grid picker
-    final chosen = await showDialog<String>(
+    // Show 3x3 grid picker — use BoxFit.contain so cropped strips show fully
+    final chosenIndex = await showDialog<int>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Choose thumbnail'),
@@ -610,14 +619,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
               Expanded(
                 child: GridView.builder(
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8, childAspectRatio: 16 / 9,
+                    crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8,
+                    childAspectRatio: 16 / 9,
                   ),
-                  itemCount: framePaths!.length,
+                  itemCount: frames!.length,
                   itemBuilder: (_, i) => InkWell(
-                    onTap: () => Navigator.pop(ctx, framePaths![i]),
+                    onTap: () => Navigator.pop(ctx, i),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: Image.file(File(framePaths![i]), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image))),
+                      child: ColoredBox(
+                        color: Colors.black,
+                        child: Image.file(
+                          File(frames![i].path),
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image, color: Colors.white)),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -626,26 +643,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, '__pick_file__'), child: const Text('Pick from file...')),
-          TextButton(onPressed: () => Navigator.pop(ctx, '__refresh__'), child: const Text('Refresh frames')),
+          TextButton(onPressed: () => Navigator.pop(ctx, -2), child: const Text('Pick from file...')),
+          TextButton(onPressed: () => Navigator.pop(ctx, -1), child: const Text('Refresh frames')),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
         ],
       ),
     );
 
-    if (chosen == '__refresh__') { _cleanupTempDir(tempDir); await _showThumbnailPicker(item); return; }
-    if (chosen == '__pick_file__') { _cleanupTempDir(tempDir); await _pickThumbnailFromFile(item, thumbService); return; }
+    if (chosenIndex == -1) { _cleanupTempDir(tempDir); await _showThumbnailPicker(item); return; }
+    if (chosenIndex == -2) { _cleanupTempDir(tempDir); await _pickThumbnailFromFile(item, thumbService); return; }
 
-    if (chosen != null) {
-      final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: chosen);
+    if (chosenIndex != null && chosenIndex >= 0) {
+      final chosen = frames![chosenIndex];
+      final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: chosen.path);
       if (!mounted) return;
       if (ok) {
-        // Evict cached image so the grid shows the new thumbnail immediately.
+        // Evict Flutter's image cache so the grid shows the new thumbnail immediately
         final thumbPath = p.join(app.paths!.thumbsDir.path, '${item.id}.jpg');
         await FileImage(File(thumbPath)).evict();
+        await _reload();
       }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
-      setState(() {});
     }
 
     _cleanupTempDir(tempDir);
@@ -662,13 +680,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final ok = await thumbService.setThumbnail(itemId: item.id, sourceFramePath: result.files.first.path!);
     if (!mounted) return;
     if (ok) {
-      // Evict cached image so the grid shows the new thumbnail immediately.
+      // Evict Flutter's image cache then reload so the grid refreshes immediately
       final appState = context.read<AppState>();
       final thumbPath = p.join(appState.paths!.thumbsDir.path, '${item.id}.jpg');
       await FileImage(File(thumbPath)).evict();
+      await _reload();
     }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Thumbnail set' : 'Failed to set thumbnail')));
-    setState(() {});
   }
 
   void _cleanupTempDir(Directory dir) {
@@ -888,6 +906,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   setState(() {
                     _sortField = field;
                     _sortAscending = ascending;
+                    // New seed every time random is (re)selected → new shuffle
+                    if (field == _SortField.random) {
+                      _shuffleSeed = DateTime.now().millisecondsSinceEpoch;
+                    }
                   });
                 },
                 onTypeFilterChanged: (filters) {
@@ -1111,7 +1133,9 @@ class _BottomBar extends StatelessWidget {
     final filterLabel = typeFilters.isEmpty
         ? 'All'
         : typeFilters.map((f) => f.label).join(', ');
-    final sortLabel = '${sortField.label} ${sortAscending ? '↑' : '↓'}';
+    final sortLabel = sortField == _SortField.random
+        ? 'Random'
+        : '${sortField.label} ${sortAscending ? '↑' : '↓'}';
 
     return Padding(
       padding: const EdgeInsets.all(8),
@@ -1176,13 +1200,18 @@ class _SortButton extends StatelessWidget {
         label: Text('Sort: $label', style: const TextStyle(fontSize: 12)),
       ),
       menuChildren: [
-        for (final field in _SortField.values) ...[
+        for (final field in _SortField.values)
           MenuItemButton(
-            leadingIcon: sortField == field
+            leadingIcon: sortField == field && field != _SortField.random
                 ? Icon(sortAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 16)
-                : const SizedBox(width: 16),
+                : sortField == field && field == _SortField.random
+                    ? const Icon(Icons.shuffle, size: 16)
+                    : const SizedBox(width: 16),
             onPressed: () {
-              if (sortField == field) {
+              if (field == _SortField.random) {
+                // Always reshuffle when random is picked
+                onChanged(field, false);
+              } else if (sortField == field) {
                 onChanged(field, !sortAscending);
               } else {
                 onChanged(field, false);
@@ -1190,7 +1219,6 @@ class _SortButton extends StatelessWidget {
             },
             child: Text(field.label),
           ),
-        ],
       ],
     );
   }

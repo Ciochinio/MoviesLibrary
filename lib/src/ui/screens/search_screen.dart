@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -14,7 +15,7 @@ import '../widgets/tag_manager_dialog.dart';
 import '../widgets/tag_filter_panel.dart';
 
 // ── Sort / Filter enums (mirrored from library_screen) ────────────────────
-enum _SortField { dateAdded, name, size, fileType }
+enum _SortField { dateAdded, name, size, fileType, random }
 enum _TypeFilter { all, image, gif, video, other }
 
 extension _SortFieldLabel on _SortField {
@@ -23,6 +24,7 @@ extension _SortFieldLabel on _SortField {
         _SortField.name => 'Name',
         _SortField.size => 'Size',
         _SortField.fileType => 'File Type',
+        _SortField.random => 'Random',
       };
 }
 
@@ -57,6 +59,7 @@ class _SearchScreenState extends State<SearchScreen> {
   _SortField _sortField = _SortField.dateAdded;
   bool _sortAscending = false;
   final Set<_TypeFilter> _typeFilters = {};
+  int _shuffleSeed = 0;
 
   // Untagged indicator
   Set<String> _untaggedIds = {};
@@ -111,6 +114,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _untaggedIds = {};
       _sortField = _SortField.dateAdded;
       _sortAscending = false;
+      _shuffleSeed = 0;
       _typeFilters.clear();
     });
   }
@@ -191,20 +195,26 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     result = List.of(result);
-    result.sort((a, b) {
-      int cmp;
-      switch (_sortField) {
-        case _SortField.dateAdded:
-          cmp = a.createdAt.compareTo(b.createdAt);
-        case _SortField.name:
-          cmp = a.originalName.toLowerCase().compareTo(b.originalName.toLowerCase());
-        case _SortField.size:
-          cmp = a.sizeBytes.compareTo(b.sizeBytes);
-        case _SortField.fileType:
-          cmp = _fileTypeOrder(_typeFilterOf(a)).compareTo(_fileTypeOrder(_typeFilterOf(b)));
-      }
-      return _sortAscending ? cmp : -cmp;
-    });
+    if (_sortField == _SortField.random) {
+      result.shuffle(Random(_shuffleSeed));
+    } else {
+      result.sort((a, b) {
+        int cmp;
+        switch (_sortField) {
+          case _SortField.dateAdded:
+            cmp = a.createdAt.compareTo(b.createdAt);
+          case _SortField.name:
+            cmp = a.originalName.toLowerCase().compareTo(b.originalName.toLowerCase());
+          case _SortField.size:
+            cmp = a.sizeBytes.compareTo(b.sizeBytes);
+          case _SortField.fileType:
+            cmp = _fileTypeOrder(_typeFilterOf(a)).compareTo(_fileTypeOrder(_typeFilterOf(b)));
+          case _SortField.random:
+            cmp = 0;
+        }
+        return _sortAscending ? cmp : -cmp;
+      });
+    }
 
     return result;
   }
@@ -214,7 +224,9 @@ class _SearchScreenState extends State<SearchScreen> {
     final app = context.watch<AppState>();
     final displayItems = _applyFiltersAndSort(_results);
     final filterLabel = _typeFilters.isEmpty ? 'All' : _typeFilters.map((f) => f.label).join(', ');
-    final sortLabel = '${_sortField.label} ${_sortAscending ? '↑' : '↓'}';
+    final sortLabel = _sortField == _SortField.random
+        ? 'Random'
+        : '${_sortField.label} ${_sortAscending ? '↑' : '↓'}';
 
     return Row(
       children: [
@@ -559,11 +571,15 @@ class _SortButton extends StatelessWidget {
       menuChildren: [
         for (final field in _SortField.values)
           MenuItemButton(
-            leadingIcon: sortField == field
+            leadingIcon: sortField == field && field != _SortField.random
                 ? Icon(sortAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 16)
-                : const SizedBox(width: 16),
+                : sortField == field && field == _SortField.random
+                    ? const Icon(Icons.shuffle, size: 16)
+                    : const SizedBox(width: 16),
             onPressed: () {
-              if (sortField == field) {
+              if (field == _SortField.random) {
+                onChanged(field, false);
+              } else if (sortField == field) {
                 onChanged(field, !sortAscending);
               } else {
                 onChanged(field, false);
