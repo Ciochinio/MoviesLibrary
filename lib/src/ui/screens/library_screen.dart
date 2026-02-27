@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -16,6 +15,7 @@ import '../../core/thumbnail_service.dart';
 import '../../core/import_controller.dart';
 
 import '../widgets/tag_manager_dialog.dart';
+import '../widgets/media_grid_controls.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -24,29 +24,10 @@ class LibraryScreen extends StatefulWidget {
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-// ── Sort / Filter enums ────────────────────────────────────────────────────
-enum _SortField { dateAdded, name, size, fileType, random }
-enum _TypeFilter { all, image, gif, video, other }
-
-extension _SortFieldLabel on _SortField {
-  String get label => switch (this) {
-        _SortField.dateAdded => 'Date Added',
-        _SortField.name => 'Name',
-        _SortField.size => 'Size',
-        _SortField.fileType => 'File Type',
-        _SortField.random => 'Random',
-      };
-}
-
-extension _TypeFilterLabel on _TypeFilter {
-  String get label => switch (this) {
-        _TypeFilter.all => 'All',
-        _TypeFilter.image => 'Image',
-        _TypeFilter.gif => 'GIF',
-        _TypeFilter.video => 'Video',
-        _TypeFilter.other => 'Other',
-      };
-}
+// Sort / Filter enums and helpers are in media_grid_controls.dart
+// Using type aliases for local readability
+typedef _SortField = SortField;
+typedef _TypeFilter = TypeFilter;
 
 class _LibraryScreenState extends State<LibraryScreen> {
   MediaItem? selectedItem;
@@ -82,57 +63,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   // ─── Sort & Filter helpers ────────────────────────────────────────────
 
-  bool _isGifPath(String relPath) => p.extension(relPath).toLowerCase() == '.gif';
-
-  _TypeFilter _typeFilterOf(MediaItem item) {
-    if (item.type == ItemType.video) return _TypeFilter.video;
-    if (item.type == ItemType.image) {
-      if (_isGifPath(item.storedRelPath)) return _TypeFilter.gif;
-      return _TypeFilter.image;
-    }
-    return _TypeFilter.other;
-  }
-
-  int _fileTypeOrder(_TypeFilter f) => switch (f) {
-        _TypeFilter.video => 0,
-        _TypeFilter.gif => 1,
-        _TypeFilter.image => 2,
-        _TypeFilter.other => 3,
-        _TypeFilter.all => 4,
-      };
-
   List<MediaItem> _applyFiltersAndSort(List<MediaItem> items) {
-    var result = items;
-
-    // Apply type filter
-    if (_typeFilters.isNotEmpty) {
-      result = result.where((item) => _typeFilters.contains(_typeFilterOf(item))).toList();
-    }
-
-    // Apply sort
-    result = List.of(result);
-    if (_sortField == _SortField.random) {
-      result.shuffle(Random(_shuffleSeed));
-    } else {
-      result.sort((a, b) {
-        int cmp;
-        switch (_sortField) {
-          case _SortField.dateAdded:
-            cmp = a.createdAt.compareTo(b.createdAt);
-          case _SortField.name:
-            cmp = a.originalName.toLowerCase().compareTo(b.originalName.toLowerCase());
-          case _SortField.size:
-            cmp = a.sizeBytes.compareTo(b.sizeBytes);
-          case _SortField.fileType:
-            cmp = _fileTypeOrder(_typeFilterOf(a)).compareTo(_fileTypeOrder(_typeFilterOf(b)));
-          case _SortField.random:
-            cmp = 0; // handled above
-        }
-        return _sortAscending ? cmp : -cmp;
-      });
-    }
-
-    return result;
+    return applyFiltersAndSort(
+      items,
+      sortField: _sortField,
+      sortAscending: _sortAscending,
+      typeFilters: _typeFilters,
+      shuffleSeed: _shuffleSeed,
+    );
   }
 
   // Track last loaded subcategory so we know when to reset sort/filter
@@ -1193,14 +1131,14 @@ class _BottomBar extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _SortButton(
+              SortButton(
                 label: sortLabel,
                 sortField: sortField,
                 sortAscending: sortAscending,
                 onChanged: onSortChanged,
               ),
               const SizedBox(width: 8),
-              _TypeFilterButton(
+              TypeFilterButton(
                 label: filterLabel,
                 selected: typeFilters,
                 onChanged: onTypeFilterChanged,
@@ -1213,104 +1151,6 @@ class _BottomBar extends StatelessWidget {
   }
 }
 
-class _SortButton extends StatelessWidget {
-  final String label;
-  final _SortField sortField;
-  final bool sortAscending;
-  final void Function(_SortField, bool) onChanged;
-
-  const _SortButton({
-    required this.label,
-    required this.sortField,
-    required this.sortAscending,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return MenuAnchor(
-      builder: (context, controller, child) => OutlinedButton.icon(
-        onPressed: () => controller.isOpen ? controller.close() : controller.open(),
-        icon: const Icon(Icons.sort, size: 16),
-        label: Text('Sort: $label', style: const TextStyle(fontSize: 12)),
-      ),
-      menuChildren: [
-        for (final field in _SortField.values)
-          MenuItemButton(
-            leadingIcon: sortField == field && field != _SortField.random
-                ? Icon(sortAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 16)
-                : sortField == field && field == _SortField.random
-                    ? const Icon(Icons.shuffle, size: 16)
-                    : const SizedBox(width: 16),
-            onPressed: () {
-              if (field == _SortField.random) {
-                // Always reshuffle when random is picked
-                onChanged(field, false);
-              } else if (sortField == field) {
-                onChanged(field, !sortAscending);
-              } else {
-                onChanged(field, false);
-              }
-            },
-            child: Text(field.label),
-          ),
-      ],
-    );
-  }
-}
-
-class _TypeFilterButton extends StatelessWidget {
-  final String label;
-  final Set<_TypeFilter> selected;
-  final void Function(Set<_TypeFilter>) onChanged;
-
-  const _TypeFilterButton({
-    required this.label,
-    required this.selected,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return MenuAnchor(
-      builder: (context, controller, child) => OutlinedButton.icon(
-        onPressed: () => controller.isOpen ? controller.close() : controller.open(),
-        icon: const Icon(Icons.filter_list, size: 16),
-        label: Text('Filter: $label', style: const TextStyle(fontSize: 12)),
-        style: selected.isNotEmpty
-            ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
-            : null,
-      ),
-      menuChildren: [
-        // "All" clears filter
-        MenuItemButton(
-          leadingIcon: selected.isEmpty
-              ? const Icon(Icons.check, size: 16)
-              : const SizedBox(width: 16),
-          onPressed: () => onChanged({}),
-          child: const Text('All'),
-        ),
-        const Divider(height: 1),
-        for (final filter in [_TypeFilter.image, _TypeFilter.gif, _TypeFilter.video, _TypeFilter.other])
-          MenuItemButton(
-            leadingIcon: selected.contains(filter)
-                ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.primary)
-                : const SizedBox(width: 16),
-            onPressed: () {
-              final next = Set<_TypeFilter>.from(selected);
-              if (next.contains(filter)) {
-                next.remove(filter);
-              } else {
-                next.add(filter);
-              }
-              onChanged(next);
-            },
-            child: Text(filter.label),
-          ),
-      ],
-    );
-  }
-}
 
 // ──────────────────────────────────────────────
 // Items Grid — GIF first-frame + video thumbnails
@@ -1354,8 +1194,6 @@ class _ItemsGrid extends StatelessWidget {
     required this.onContextMenu,
   }) : _gifAutoplay = gifAutoplay;
 
-  bool _isGif(String filePath) => p.extension(filePath).toLowerCase() == '.gif';
-
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) return const Center(child: Text('No items — import files or drag them here'));
@@ -1379,7 +1217,7 @@ class _ItemsGrid extends StatelessWidget {
         // Check for custom thumbnail (videos and GIFs)
         final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
         final hasThumb = thumbFile.existsSync();
-        final isGif = _isGif(filePath);
+        final isGif = isGifPath(filePath);
         // Show "no thumbnail" indicator for videos and non-autoplay GIFs without custom thumbnail
         final needsThumbIndicator = (it.type == ItemType.video || (isGif && !_gifAutoplay)) && !hasThumb;
         final isFavourite = it.isFavourite;
@@ -1472,7 +1310,7 @@ class _ItemsGrid extends StatelessWidget {
                     if (showTypeMarkers)
                       Positioned(
                         right: 8, bottom: 8,
-                        child: _TypeBadge(item: it, isGif: isGif, hasThumb: hasThumb),
+                        child: TypeBadge(item: it, isGif: isGif, hasThumb: hasThumb),
                       ),
                     // "!" indicator for videos/GIFs without thumbnails
                     if (needsThumbIndicator)
@@ -1558,56 +1396,6 @@ class _ItemsGrid extends StatelessWidget {
   }
 }
 
-// ──────────────────────────────────────────────
-// Type Badge — shown bottom-right on each grid tile
-// ──────────────────────────────────────────────
-class _TypeBadge extends StatelessWidget {
-  final MediaItem item;
-  final bool isGif;
-  final bool hasThumb;
-
-  const _TypeBadge({required this.item, required this.isGif, required this.hasThumb});
-
-  @override
-  Widget build(BuildContext context) {
-    // Only show badge when there is something to display over (thumbnail or image)
-    if (item.type == ItemType.video) {
-      if (!hasThumb) return const SizedBox.shrink(); // no-thumb videos already show icon+text
-      return _badge(
-        child: const Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.play_arrow, size: 14, color: Colors.white),
-          SizedBox(width: 2),
-          Text('Video', style: TextStyle(color: Colors.white, fontSize: 10)),
-        ]),
-      );
-    }
-    if (isGif) {
-      return _badge(
-        child: const Text('GIF', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-      );
-    }
-    if (item.type == ItemType.image) {
-      return _badge(
-        child: const Text('Image', style: TextStyle(color: Colors.white, fontSize: 10)),
-      );
-    }
-    // Other
-    return _badge(
-      child: const Text('Other', style: TextStyle(color: Colors.white, fontSize: 10)),
-    );
-  }
-
-  Widget _badge({required Widget child}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.7),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: child,
-    );
-  }
-}
 
 // ──────────────────────────────────────────────
 // Static GIF: renders only the first frame
