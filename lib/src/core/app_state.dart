@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' hide Category;
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -541,6 +542,12 @@ Future<void> setShowTypeMarkers(bool value) async {
 
 Future<void> setShowUntaggedIndicator(bool value) async {
   settings = settings.copyWith(showUntaggedIndicator: value);
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
+Future<void> setThemeMode(ThemeMode mode) async {
+  settings = settings.copyWith(themeMode: mode);
   await AppSettings.save(paths!.settingsFile, settings);
   notifyListeners();
 }

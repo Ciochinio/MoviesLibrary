@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+
 enum ImportMode { copy, move }
 
 class AppSettings {
@@ -9,6 +11,7 @@ class AppSettings {
   final bool gifAutoplay;
   final bool showTypeMarkers;
   final bool showUntaggedIndicator;
+  final ThemeMode themeMode;
 
   const AppSettings({
     required this.importMode,
@@ -16,6 +19,7 @@ class AppSettings {
     required this.gifAutoplay,
     required this.showTypeMarkers,
     required this.showUntaggedIndicator,
+    required this.themeMode,
   });
 
   AppSettings copyWith({
@@ -24,6 +28,7 @@ class AppSettings {
     bool? gifAutoplay,
     bool? showTypeMarkers,
     bool? showUntaggedIndicator,
+    ThemeMode? themeMode,
   }) {
     return AppSettings(
       importMode: importMode ?? this.importMode,
@@ -31,6 +36,7 @@ class AppSettings {
       gifAutoplay: gifAutoplay ?? this.gifAutoplay,
       showTypeMarkers: showTypeMarkers ?? this.showTypeMarkers,
       showUntaggedIndicator: showUntaggedIndicator ?? this.showUntaggedIndicator,
+      themeMode: themeMode ?? this.themeMode,
     );
   }
 
@@ -40,6 +46,7 @@ class AppSettings {
         'gifAutoplay': gifAutoplay,
         'showTypeMarkers': showTypeMarkers,
         'showUntaggedIndicator': showUntaggedIndicator,
+        'themeMode': themeMode.name,
       };
 
   static AppSettings fromJson(Map<String, Object?> json) {
@@ -52,12 +59,18 @@ class AppSettings {
     final gifAuto = (json['gifAutoplay'] as bool?) ?? false;
     final typeMarkers = (json['showTypeMarkers'] as bool?) ?? true;
     final untaggedIndicator = (json['showUntaggedIndicator'] as bool?) ?? true;
+    final themeModeStr = (json['themeMode'] as String?) ?? 'system';
+    final themeMode = ThemeMode.values.firstWhere(
+      (e) => e.name == themeModeStr,
+      orElse: () => ThemeMode.system,
+    );
     return AppSettings(
       importMode: mode,
       confirmDelete: confirm,
       gifAutoplay: gifAuto,
       showTypeMarkers: typeMarkers,
       showUntaggedIndicator: untaggedIndicator,
+      themeMode: themeMode,
     );
   }
 
@@ -67,6 +80,7 @@ class AppSettings {
     gifAutoplay: false,
     showTypeMarkers: true,
     showUntaggedIndicator: true,
+    themeMode: ThemeMode.system,
   );
 
   static Future<AppSettings> load(File settingsFile) async {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+
 import '../../core/app_state.dart';
 import '../../core/app_settings.dart';
 import '../../core/thumbnail_service.dart';
@@ -78,6 +79,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: ListView(
         children: [
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 12),
+
+          // ─── Theme mode ───
+          Card(
+            child: ListTile(
+              title: const Text('Appearance'),
+              subtitle: const Text('Choose between light, dark, or follow system setting.'),
+              trailing: SegmentedButton<ThemeMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: ThemeMode.light,
+                    icon: Icon(Icons.light_mode, size: 16),
+                    label: Text('Light'),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.system,
+                    icon: Icon(Icons.brightness_auto, size: 16),
+                    label: Text('System'),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.dark,
+                    icon: Icon(Icons.dark_mode, size: 16),
+                    label: Text('Dark'),
+                  ),
+                ],
+                selected: {app.settings.themeMode},
+                onSelectionChanged: (s) =>
+                    context.read<AppState>().setThemeMode(s.first),
+              ),
+            ),
+          ),
           const SizedBox(height: 12),
 
           // ─── Import mode ───
