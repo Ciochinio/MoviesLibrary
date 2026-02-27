@@ -165,8 +165,8 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
           return AlertDialog(
             title: const Text('Tags'),
             content: SizedBox(
-              width: 900,
-              height: 545,
+              width: 760,
+              height: 500,
               child: TagPickerBody(
                 simpleSelected: simpleSelected,
                 kvSelected: kvSelected,

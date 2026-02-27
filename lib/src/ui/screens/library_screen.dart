@@ -16,6 +16,8 @@ import '../../core/import_controller.dart';
 
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/media_grid_controls.dart';
+import '../widgets/media_player_widget.dart';
+import 'full_player_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -37,6 +39,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final ScrollController _gridScrollController = ScrollController();
   bool _selectMode = false;
 
+  // ── In-app player ────────────────────────────────────────────────────────
+  PmlPlayerController? _playerController;
+
   // Sort & filter — session only, reset on subcategory change
   _SortField _sortField = _SortField.dateAdded;
   bool _sortAscending = false;
@@ -52,7 +57,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void dispose() {
     _gridScrollController.dispose();
+    _playerController?.dispose();
     super.dispose();
+  }
+
+  // ── Create or reuse player controller when an item is selected ───────────
+  void _selectItemForPlayback(MediaItem item) {
+    final app = context.read<AppState>();
+    final filePath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
+    // Reuse controller if it exists; create one if not
+    _playerController ??= PmlPlayerController();
+    _playerController!.open(item, filePath);
+    setState(() => selectedItem = item);
+  }
+
+  void _openFullPlayer(AppState app) {
+    if (selectedItem == null) return;
+    // Pause current playback before navigating
+    _playerController?.player.pause();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FullPlayerScreen(
+          initialItem: selectedItem!,
+          allItems: _applyFiltersAndSort(loaded),
+          libraryFilesDir: app.paths!.filesDir,
+          thumbsDir: app.paths!.thumbsDir,
+        ),
+      ),
+    ).then((_) {
+      // Resume nothing — user comes back to library grid
+      setState(() {});
+    });
   }
 
   @override
@@ -801,7 +836,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                   // Auto-exit select mode when last item deselected
                                   if (app.selectedItemIds.isEmpty) setState(() => _selectMode = false);
                                 } else {
-                                  setState(() => selectedItem = item);
+                                  _selectItemForPlayback(item);
                                 }
                               },
                               onToggleBulk: (id) {
@@ -886,15 +921,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
         const VerticalDivider(width: 1),
-        // ─── Details panel ───────────
+        // ─── Player + Details panel ───────────
         SizedBox(
-          width: 280,
+          width: 300,
           child: selectedItem == null
               ? const Center(child: Text('Select an item'))
-              : _DetailsPanel(
+              : _PlayerDetailsPanel(
                   item: selectedItem!,
+                  playerController: _playerController!,
                   libraryFilesDir: app.paths!.filesDir,
                   thumbsDir: app.paths!.thumbsDir,
+                  onExpand: () => _openFullPlayer(app),
                   onOpen: () async {
                     final filePath = LibraryFolders.absPath(app.paths!.filesDir, selectedItem!.storedRelPath);
                     await OpenFilex.open(filePath);
@@ -1471,7 +1508,152 @@ class _StaticGifImageState extends State<_StaticGifImage> {
 }
 
 // ──────────────────────────────────────────────
-// Details Panel (with thumbnail support)
+// Player + Details Panel (Option A — side panel)
+// Replaces the old static _DetailsPanel.
+// Shows the in-app player on top, metadata + actions below.
+// ──────────────────────────────────────────────
+class _PlayerDetailsPanel extends StatefulWidget {
+  final MediaItem item;
+  final PmlPlayerController playerController;
+  final Directory libraryFilesDir;
+  final Directory thumbsDir;
+  final VoidCallback onExpand;
+  final VoidCallback onOpen;
+  final VoidCallback onExport;
+  final VoidCallback onMove;
+  final VoidCallback onTags;
+  final VoidCallback onDelete;
+  final Future<List<Tag>> Function() loadTags;
+  final Future<List<TagKeyValue>> Function() loadKeyValues;
+
+  const _PlayerDetailsPanel({
+    required this.item,
+    required this.playerController,
+    required this.libraryFilesDir,
+    required this.thumbsDir,
+    required this.onExpand,
+    required this.onOpen,
+    required this.onExport,
+    required this.onMove,
+    required this.onTags,
+    required this.onDelete,
+    required this.loadTags,
+    required this.loadKeyValues,
+  });
+
+  @override
+  State<_PlayerDetailsPanel> createState() => _PlayerDetailsPanelState();
+}
+
+class _PlayerDetailsPanelState extends State<_PlayerDetailsPanel> {
+  @override
+  Widget build(BuildContext context) {
+    final filePath = LibraryFolders.absPath(widget.libraryFilesDir, widget.item.storedRelPath);
+    // Player area is 16:9 of the panel width (300px → ~169px tall)
+    const playerHeight = 169.0;
+
+    return Column(
+      children: [
+        // ── Player area ──────────────────────────────────────────────────
+        SizedBox(
+          height: playerHeight,
+          child: ColoredBox(
+            color: Colors.black,
+            child: MediaPlayerWidget(
+              key: ValueKey(widget.item.id),
+              item: widget.item,
+              filePath: filePath,
+              controller: widget.playerController,
+              compact: true,
+              onExpand: widget.onExpand,
+            ),
+          ),
+        ),
+
+        const Divider(height: 1),
+
+        // ── Scrollable metadata + actions ────────────────────────────────
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(widget.item.originalName,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 6),
+                Text('SHA256: ${widget.item.sha256.substring(0, 12)}…',
+                    style: Theme.of(context).textTheme.bodySmall),
+                if (widget.item.isDuplicate)
+                  Text('Duplicate (linked: ${widget.item.duplicateOfId ?? "?"})',
+                      style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                    onPressed: widget.onOpen,
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('Open in system')),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                    onPressed: widget.onExpand,
+                    icon: const Icon(Icons.open_in_full),
+                    label: const Text('Full player view')),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                    onPressed: widget.onExport,
+                    icon: const Icon(Icons.download),
+                    label: const Text('Export to disk')),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                    onPressed: widget.onMove,
+                    icon: const Icon(Icons.drive_file_move),
+                    label: const Text('Move')),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                    onPressed: widget.onTags,
+                    icon: const Icon(Icons.sell),
+                    label: const Text('Tags')),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                    onPressed: widget.onDelete,
+                    icon: const Icon(Icons.delete),
+                    label: const Text('Delete')),
+                const SizedBox(height: 10),
+                FutureBuilder<List<Tag>>(
+                  future: widget.loadTags(),
+                  builder: (ctx, snap) {
+                    final tags = snap.data ?? const <Tag>[];
+                    if (tags.isEmpty) return const Text('No tags');
+                    return Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [for (final t in tags) Chip(label: Text(t.name))]);
+                  },
+                ),
+                const SizedBox(height: 6),
+                FutureBuilder<List<TagKeyValue>>(
+                  future: widget.loadKeyValues(),
+                  builder: (ctx, snap) {
+                    final kv = snap.data ?? const <TagKeyValue>[];
+                    if (kv.isEmpty) return const SizedBox.shrink();
+                    return Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [for (final v in kv) Chip(label: Text(formatKeyValueChip(v)))]);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ──────────────────────────────────────────────
+// Details Panel (kept for reference / fallback)
 // ──────────────────────────────────────────────
 class _DetailsPanel extends StatelessWidget {
   final MediaItem item;

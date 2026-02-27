@@ -20,6 +20,10 @@ dependencies:
   intl: ^0.19.0
   desktop_drop: ^0.4.4
   google_fonts: ^6.2.1
+  # ── In-app media player ────────────────────────────────────────────────────
+  media_kit: ^1.1.11                      # core player API
+  media_kit_video: ^1.2.5                 # video renderer widget
+  media_kit_libs_windows_video: ^1.0.9    # Windows native libs (FFmpeg bundled)
 
 dev_dependencies:
   flutter_test:
