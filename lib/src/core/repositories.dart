@@ -751,19 +751,24 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
   /// Global search with AND semantics across:
   /// - simpleTagIds (tags)
   /// - keyValueIds (tag_key_values)
+  /// [minTagMatch] — minimum number of the combined tags an item must have.
+  /// null / 0 means require ALL selected tags (original behaviour).
   Future<List<MediaItem>> searchItemsGlobal({
     required List<String> simpleTagIds,
     required List<String> keyValueIds,
     String? filename,
+    int? minTagMatch,
   }) async {
-    // If no filters at all, return empty to avoid accidental "dump all".
     if (simpleTagIds.isEmpty && keyValueIds.isEmpty && (filename == null || filename.trim().isEmpty)) return [];
 
-    // Start with all items.
-    // We'll filter by joining required mapping tables and HAVING counts.
+    final totalTags = simpleTagIds.length + keyValueIds.length;
+    // effectiveMin: if minTagMatch is set and less than total, use it; else require all
+    final effectiveMin = (minTagMatch != null && minTagMatch > 0 && minTagMatch < totalTags)
+        ? minTagMatch
+        : totalTags;
+
     final whereParts = <String>[];
     final args = <Object?>[];
-
     String joinSql = 'FROM items i';
 
     if (simpleTagIds.isNotEmpty) {
@@ -780,7 +785,6 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
       args.addAll(keyValueIds);
     }
 
-    // Filename filtering (partial match, case-insensitive)
     if (filename != null && filename.trim().isNotEmpty) {
       whereParts.add('i.original_name LIKE ?');
       args.add('%${filename.trim()}%');
@@ -788,23 +792,20 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
 
     final whereSql = whereParts.isEmpty ? '' : ('WHERE ' + whereParts.join(' AND '));
 
-    // HAVING ensures AND semantics within each set.
-    final havingParts = <String>[];
-    if (simpleTagIds.isNotEmpty) {
-      havingParts.add('COUNT(DISTINCT it.tag_id) = ?');
-      args.add(simpleTagIds.length);
-    }
-    if (keyValueIds.isNotEmpty) {
-      havingParts.add('COUNT(DISTINCT itk.key_value_id) = ?');
-      args.add(keyValueIds.length);
-    }
+    // Build unified count across both simple and kv joins, use >= for min-match
+    final countParts = <String>[];
+    if (simpleTagIds.isNotEmpty) countParts.add('COUNT(DISTINCT it.tag_id)');
+    if (keyValueIds.isNotEmpty) countParts.add('COUNT(DISTINCT itk.key_value_id)');
+    final countExpr = countParts.join(' + ');
+    final havingSql = countParts.isNotEmpty ? 'HAVING $countExpr >= ?' : '';
+    if (countParts.isNotEmpty) args.add(effectiveMin);
 
     final sql = '''
       SELECT i.*
       $joinSql
       $whereSql
       GROUP BY i.id
-      ${havingParts.isEmpty ? '' : 'HAVING ' + havingParts.join(' AND ')}
+      $havingSql
       ORDER BY i.created_at DESC
     ''';
 

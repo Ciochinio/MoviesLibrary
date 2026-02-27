@@ -9,8 +9,8 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../core/library_folders.dart';
-import '../../core/thumbnail_service.dart';
 import '../widgets/tag_manager_dialog.dart';
+import '../widgets/shared_player_panel.dart';
 
 class FavouritesScreen extends StatefulWidget {
   const FavouritesScreen({super.key});
@@ -22,6 +22,7 @@ class FavouritesScreen extends StatefulWidget {
 class _FavouritesScreenState extends State<FavouritesScreen> {
   List<MediaItem> _items = [];
   MediaItem? _selected;
+  double _panelWidth = 300.0;
   bool _loading = false;
   final ScrollController _scrollController = ScrollController();
 
@@ -142,24 +143,39 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
               // Details panel
               if (_selected != null) ...[
                 const VerticalDivider(width: 1),
-                SizedBox(
-                  width: 320,
-                  child: _DetailsPanel(
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeInOut,
+                  width: _panelWidth,
+                  child: SharedPlayerPanel(
+                    key: ValueKey(_selected!.id),
                     item: _selected!,
-                    filesDir: app.paths!.filesDir,
+                    libraryFilesDir: app.paths!.filesDir,
                     thumbsDir: app.paths!.thumbsDir,
+                    allItems: _items,
+                    onTheatreChanged: (w) => setState(() => _panelWidth = w),
                     onOpen: () async {
                       final abs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
                       await OpenFilex.open(abs);
                     },
-                    onTags: () => _showTagsForItem(_selected!),
                     onExport: () => _exportItem(_selected!),
-                    onUnfavourite: () async {
+                    onTags: () => _showTagsForItem(_selected!),
+                    onDelete: () async {
                       await _toggleFavourite(_selected!.id, false);
                       setState(() => _selected = null);
                     },
                     loadTags: () => app.items!.listTagsForItem(_selected!.id),
                     loadKeyValues: () => app.items!.listKeyValuesForItem(_selected!.id),
+                    extraActions: [
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _toggleFavourite(_selected!.id, false);
+                          setState(() => _selected = null);
+                        },
+                        icon: const Icon(Icons.heart_broken, size: 16, color: Colors.redAccent),
+                        label: const Text('Remove from favourites', style: TextStyle(color: Colors.redAccent)),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -326,107 +342,3 @@ class _FavouritesGrid extends StatelessWidget {
 // ──────────────────────────────────────────────
 // Details panel
 // ──────────────────────────────────────────────
-class _DetailsPanel extends StatelessWidget {
-  final MediaItem item;
-  final Directory filesDir;
-  final Directory thumbsDir;
-  final VoidCallback onOpen;
-  final VoidCallback onTags;
-  final VoidCallback onExport;
-  final VoidCallback onUnfavourite;
-  final Future<List<Tag>> Function() loadTags;
-  final Future<List<TagKeyValue>> Function() loadKeyValues;
-
-  const _DetailsPanel({
-    required this.item,
-    required this.filesDir,
-    required this.thumbsDir,
-    required this.onOpen,
-    required this.onTags,
-    required this.onExport,
-    required this.onUnfavourite,
-    required this.loadTags,
-    required this.loadKeyValues,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final filePath = LibraryFolders.absPath(filesDir, item.storedRelPath);
-    final thumbFile = File(p.join(thumbsDir.path, '${item.id}.jpg'));
-    final hasThumb = thumbFile.existsSync();
-
-    Widget preview;
-    if (hasThumb) {
-      preview = ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.file(thumbFile, fit: BoxFit.contain),
-      );
-    } else if (item.type == ItemType.image) {
-      preview = ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.file(File(filePath), fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 64)),
-      );
-    } else if (item.type == ItemType.video) {
-      preview = const Center(child: Icon(Icons.movie, size: 64));
-    } else {
-      preview = const Center(child: Icon(Icons.insert_drive_file, size: 64));
-    }
-
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(height: 180, child: preview),
-          const SizedBox(height: 12),
-          Text(item.originalName, style: Theme.of(context).textTheme.titleSmall, maxLines: 2, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 4),
-          Text('${(item.sizeBytes / 1024 / 1024).toStringAsFixed(2)} MB  •  ${item.type.name.toUpperCase()}',
-              style: Theme.of(context).textTheme.bodySmall),
-          const Divider(height: 20),
-          // Tags
-          FutureBuilder<List<Tag>>(
-            future: loadTags(),
-            builder: (ctx, snap) {
-              final tags = snap.data ?? [];
-              if (tags.isEmpty) return const Text('No tags', style: TextStyle(fontSize: 12));
-              return Wrap(spacing: 4, runSpacing: 4, children: [
-                for (final t in tags)
-                  Chip(label: Text(t.name, style: const TextStyle(fontSize: 11)), materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
-              ]);
-            },
-          ),
-          const SizedBox(height: 8),
-          FutureBuilder<List<TagKeyValue>>(
-            future: loadKeyValues(),
-            builder: (ctx, snap) {
-              final kvs = snap.data ?? [];
-              if (kvs.isEmpty) return const SizedBox.shrink();
-              return Wrap(spacing: 4, runSpacing: 4, children: [
-                for (final kv in kvs)
-                  Chip(label: Text('${kv.key}: ${kv.value}', style: const TextStyle(fontSize: 11)), materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
-              ]);
-            },
-          ),
-          const Spacer(),
-          const Divider(),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            OutlinedButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new, size: 16), label: const Text('Open')),
-            OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell, size: 16), label: const Text('Tags')),
-            OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download, size: 16), label: const Text('Export')),
-            OutlinedButton.icon(
-              onPressed: onUnfavourite,
-              icon: const Icon(Icons.heart_broken, size: 16, color: Colors.redAccent),
-              label: const Text('Remove from favourites'),
-            ),
-          ]),
-        ],
-      ),
-    );
-  }
-}
-
-extension _FirstOrNullExt<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-}

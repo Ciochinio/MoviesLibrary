@@ -12,6 +12,8 @@ class AppSettings {
   final bool showTypeMarkers;
   final bool showUntaggedIndicator;
   final ThemeMode themeMode;
+  final bool videoAutostartInPanel;
+  final bool startMuted;
 
   const AppSettings({
     required this.importMode,
@@ -20,6 +22,8 @@ class AppSettings {
     required this.showTypeMarkers,
     required this.showUntaggedIndicator,
     required this.themeMode,
+    this.videoAutostartInPanel = false,
+    this.startMuted = false,
   });
 
   AppSettings copyWith({
@@ -29,6 +33,8 @@ class AppSettings {
     bool? showTypeMarkers,
     bool? showUntaggedIndicator,
     ThemeMode? themeMode,
+    bool? videoAutostartInPanel,
+    bool? startMuted,
   }) {
     return AppSettings(
       importMode: importMode ?? this.importMode,
@@ -37,6 +43,8 @@ class AppSettings {
       showTypeMarkers: showTypeMarkers ?? this.showTypeMarkers,
       showUntaggedIndicator: showUntaggedIndicator ?? this.showUntaggedIndicator,
       themeMode: themeMode ?? this.themeMode,
+      videoAutostartInPanel: videoAutostartInPanel ?? this.videoAutostartInPanel,
+      startMuted: startMuted ?? this.startMuted,
     );
   }
 
@@ -47,6 +55,8 @@ class AppSettings {
         'showTypeMarkers': showTypeMarkers,
         'showUntaggedIndicator': showUntaggedIndicator,
         'themeMode': themeMode.name,
+        'videoAutostartInPanel': videoAutostartInPanel,
+        'startMuted': startMuted,
       };
 
   static AppSettings fromJson(Map<String, Object?> json) {
@@ -64,6 +74,8 @@ class AppSettings {
       (e) => e.name == themeModeStr,
       orElse: () => ThemeMode.system,
     );
+    final videoAutostart = (json['videoAutostartInPanel'] as bool?) ?? false;
+    final startMuted = (json['startMuted'] as bool?) ?? false;
     return AppSettings(
       importMode: mode,
       confirmDelete: confirm,
@@ -71,6 +83,8 @@ class AppSettings {
       showTypeMarkers: typeMarkers,
       showUntaggedIndicator: untaggedIndicator,
       themeMode: themeMode,
+      videoAutostartInPanel: videoAutostart,
+      startMuted: startMuted,
     );
   }
 
@@ -81,6 +95,8 @@ class AppSettings {
     showTypeMarkers: true,
     showUntaggedIndicator: true,
     themeMode: ThemeMode.system,
+    videoAutostartInPanel: false,
+    startMuted: false,
   );
 
   static Future<AppSettings> load(File settingsFile) async {

@@ -9,7 +9,7 @@ import '../../core/models.dart';
 class TagFilterPanel extends StatefulWidget {
   final Set<String> selectedSimpleTags;
   final Set<String> selectedKeyValues;
-  final VoidCallback onApply;
+  final void Function(int minMatch) onApply;
   final VoidCallback onClear;
   final VoidCallback onClose;
 
@@ -29,6 +29,7 @@ class TagFilterPanel extends StatefulWidget {
 class _TagFilterPanelState extends State<TagFilterPanel> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  int _minMatch = 0; // 0 = "all" sentinel
 
   @override
   void dispose() {
@@ -221,14 +222,58 @@ class _TagFilterPanelState extends State<TagFilterPanel> {
                   style: Theme.of(context).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                // Min-match stepper — only show when 2+ tags selected
+                Builder(builder: (ctx) {
+                  final total = widget.selectedSimpleTags.length + widget.selectedKeyValues.length;
+                  if (total < 2) return const SizedBox(height: 8);
+                  // Clamp _minMatch to valid range
+                  final effective = _minMatch == 0 ? total : _minMatch.clamp(1, total);
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Min match:', style: Theme.of(ctx).textTheme.bodySmall),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.remove, size: 16),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          onPressed: effective > 1
+                              ? () => setState(() => _minMatch = effective - 1)
+                              : null,
+                        ),
+                        SizedBox(
+                          width: 36,
+                          child: Text(
+                            '$effective / $total',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add, size: 16),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          onPressed: effective < total
+                              ? () => setState(() => _minMatch = effective + 1)
+                              : null,
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
                       child: OutlinedButton(
                         onPressed: (widget.selectedSimpleTags.isEmpty && widget.selectedKeyValues.isEmpty)
                             ? null
-                            : widget.onClear,
+                            : () {
+                                setState(() => _minMatch = 0);
+                                widget.onClear();
+                              },
                         child: const Text('Clear'),
                       ),
                     ),
@@ -237,7 +282,11 @@ class _TagFilterPanelState extends State<TagFilterPanel> {
                       child: FilledButton(
                         onPressed: (widget.selectedSimpleTags.isEmpty && widget.selectedKeyValues.isEmpty)
                             ? null
-                            : widget.onApply,
+                            : () {
+                                final total = widget.selectedSimpleTags.length + widget.selectedKeyValues.length;
+                                final effective = _minMatch == 0 ? total : _minMatch.clamp(1, total);
+                                widget.onApply(effective);
+                              },
                         child: const Text('Apply'),
                       ),
                     ),

@@ -1,12 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'src/app.dart';
 import 'src/core/app_state.dart';
+import 'src/ui/widgets/media_player_widget.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,11 +19,23 @@ void main() async {
     databaseFactory = databaseFactoryFfi;
   }
 
-  // media_kit — must be called before any Player is created
+  // media_kit
   MediaKit.ensureInitialized();
+
+  // window_manager — needed for true OS fullscreen
+  await windowManager.ensureInitialized();
+  WindowOptions windowOptions = const WindowOptions(
+    minimumSize: Size(800, 600),
+    titleBarStyle: TitleBarStyle.normal,
+  );
+  await windowManager.waitUntilReadyToShow(windowOptions);
+  await windowManager.show();
 
   final appState = AppState();
   await appState.bootstrap();
+
+  // Init session volume from persisted settings
+  SessionVolume.instance.initFromSettings(appState.settings.startMuted);
 
   runApp(
     ChangeNotifierProvider.value(

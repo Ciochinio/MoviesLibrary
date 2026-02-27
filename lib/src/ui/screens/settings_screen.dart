@@ -142,6 +142,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
+          // ─── Video autostart in panel ───
+          Card(
+            child: SwitchListTile(
+              title: const Text('Autoplay video in side panel'),
+              subtitle: const Text('Video starts playing automatically when selected. Off = manual play.'),
+              value: app.settings.videoAutostartInPanel,
+              onChanged: (v) => context.read<AppState>().setVideoAutostartInPanel(v),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── Start muted ───
+          Card(
+            child: SwitchListTile(
+              title: const Text('Start player muted'),
+              subtitle: const Text('All players start with volume muted until you unmute.'),
+              value: app.settings.startMuted,
+              onChanged: (v) => context.read<AppState>().setStartMuted(v),
+            ),
+          ),
+          const SizedBox(height: 12),
+
           // ─── GIF Autoplay ───
           Card(
             child: SwitchListTile(

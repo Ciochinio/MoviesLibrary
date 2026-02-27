@@ -9,10 +9,10 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/library_folders.dart';
 import '../../core/models.dart';
-import '../../core/thumbnail_service.dart';
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/tag_filter_panel.dart';
 import '../widgets/media_grid_controls.dart';
+import '../widgets/shared_player_panel.dart';
 
 // Sort / Filter enums and helpers are in media_grid_controls.dart
 typedef _SortField = SortField;
@@ -33,7 +33,9 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _loading = false;
   bool _showFilterPanel = false;
   List<MediaItem> _results = const [];
+  double _panelWidth = 300.0;
   MediaItem? _selected;
+  int _tagMinMatch = 0; // 0 = all tags required
 
   // Sort & filter — session only
   _SortField _sortField = _SortField.dateAdded;
@@ -64,6 +66,7 @@ class _SearchScreenState extends State<SearchScreen> {
         simpleTagIds: _simpleSelected.toList(),
         keyValueIds: _kvSelected.toList(),
         filename: _filenameController.text.trim().isNotEmpty ? _filenameController.text.trim() : null,
+        minTagMatch: _tagMinMatch,
       );
       if (!mounted) return;
 
@@ -88,6 +91,7 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _simpleSelected.clear();
       _kvSelected.clear();
+      _tagMinMatch = 0;
       _filenameController.clear();
       _results = const [];
       _selected = null;
@@ -324,11 +328,17 @@ class _SearchScreenState extends State<SearchScreen> {
                     ),
                     if (_selected != null) ...[
                       const VerticalDivider(width: 1),
-                      SizedBox(
-                        width: 340,
-                        child: _DetailsPanel(
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        width: _panelWidth,
+                        child: SharedPlayerPanel(
+                          key: ValueKey(_selected!.id),
                           item: _selected!,
                           libraryFilesDir: app.paths!.filesDir,
+                          thumbsDir: app.paths!.thumbsDir,
+                          allItems: _applyFiltersAndSort(_results),
+                          onTheatreChanged: (w) => setState(() => _panelWidth = w),
                           onOpen: () async {
                             final abs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
                             await OpenFilex.open(abs);
@@ -336,65 +346,47 @@ class _SearchScreenState extends State<SearchScreen> {
                           onExport: () async {
                             final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
                             if (dir == null) return;
-
                             final srcAbs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
                             final destPath = _uniquePath(p.join(dir, _selected!.originalName));
                             await File(srcAbs).copy(destPath);
-
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Exported.')));
                           },
                           onMove: () async {
                             final targetSubId = await _pickSubcategoryDialog();
                             if (targetSubId == null) return;
-
                             await app.items!.moveItemsToSubcategory([_selected!], targetSubId);
-
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Moved.')));
                             await _runSearch();
                           },
                           onTags: () async {
-                            final app = context.read<AppState>();
-                            final currentSimple = await app.items!.listTagIdsForItem(_selected!.id);
-                            final currentKV = await app.items!.listKeyValueIdsForItem(_selected!.id);
-
-                            final picked = await showTagManagerDialog(
-                              context,
-                              initialSimpleTagIds: currentSimple,
-                              initialKeyValueIds: currentKV,
-                            );
-
+                            final appCtx = context.read<AppState>();
+                            final currentSimple = await appCtx.items!.listTagIdsForItem(_selected!.id);
+                            final currentKV = await appCtx.items!.listKeyValueIdsForItem(_selected!.id);
+                            final picked = await showTagManagerDialog(context,
+                                initialSimpleTagIds: currentSimple, initialKeyValueIds: currentKV);
                             if (picked != null) {
-                              final toAdd = picked.simpleTagIds.difference(currentSimple);
-                              final toRemove = currentSimple.difference(picked.simpleTagIds);
-                              for (final id in toAdd) {
-                                await app.items!.addTagToItem(_selected!.id, id);
+                              for (final id in picked.simpleTagIds.difference(currentSimple)) {
+                                await appCtx.items!.addTagToItem(_selected!.id, id);
                               }
-                              for (final id in toRemove) {
-                                await app.items!.removeTagFromItem(_selected!.id, id);
+                              for (final id in currentSimple.difference(picked.simpleTagIds)) {
+                                await appCtx.items!.removeTagFromItem(_selected!.id, id);
                               }
-
-                              final kvToAdd = picked.keyValueIds.difference(currentKV);
-                              final kvToRemove = currentKV.difference(picked.keyValueIds);
-                              for (final id in kvToAdd) {
-                                await app.items!.addKeyValueToItem(_selected!.id, id);
+                              for (final id in picked.keyValueIds.difference(currentKV)) {
+                                await appCtx.items!.addKeyValueToItem(_selected!.id, id);
                               }
-                              for (final id in kvToRemove) {
-                                await app.items!.removeKeyValueFromItem(_selected!.id, id);
+                              for (final id in currentKV.difference(picked.keyValueIds)) {
+                                await appCtx.items!.removeKeyValueFromItem(_selected!.id, id);
                               }
-
-                              await app.items!.writeSidecarForItemId(_selected!.id);
+                              await appCtx.items!.writeSidecarForItemId(_selected!.id);
                             }
-
                             setState(() {});
                           },
                           onDelete: () async {
                             final messenger = ScaffoldMessenger.of(context);
-
                             bool proceed = true;
                             bool dontAskAgain = false;
-
                             if (app.settings.confirmDelete) {
                               final result = await showDialog<({bool confirm, bool dontAsk})>(
                                 context: context,
@@ -403,21 +395,12 @@ class _SearchScreenState extends State<SearchScreen> {
                                   return StatefulBuilder(
                                     builder: (ctx, setStateDialog) => AlertDialog(
                                       title: const Text('Confirmation'),
-                                      content: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text('Are you sure you want to delete:\n${_selected!.originalName}?'),
-                                          const SizedBox(height: 16),
-                                          CheckboxListTile(
-                                            value: dontAsk,
-                                            title: const Text("Don't ask again"),
-                                            dense: true,
-                                            contentPadding: EdgeInsets.zero,
-                                            onChanged: (v) => setStateDialog(() => dontAsk = v ?? false),
-                                          ),
-                                        ],
-                                      ),
+                                      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                        Text('Delete: ${_selected!.originalName}?'),
+                                        const SizedBox(height: 16),
+                                        CheckboxListTile(value: dontAsk, title: const Text("Don't ask again"), dense: true, contentPadding: EdgeInsets.zero,
+                                            onChanged: (v) => setStateDialog(() => dontAsk = v ?? false)),
+                                      ]),
                                       actions: [
                                         TextButton(onPressed: () => Navigator.pop(ctx, (confirm: false, dontAsk: false)), child: const Text('Cancel')),
                                         FilledButton(onPressed: () => Navigator.pop(ctx, (confirm: true, dontAsk: dontAsk)), child: const Text('Delete')),
@@ -426,27 +409,25 @@ class _SearchScreenState extends State<SearchScreen> {
                                   );
                                 },
                               );
-
                               proceed = result?.confirm ?? false;
                               dontAskAgain = result?.dontAsk ?? false;
                             }
-
                             if (!proceed) return;
-
                             if (dontAskAgain) {
                               await app.setConfirmDelete(false);
                               messenger.showSnackBar(const SnackBar(content: Text('Delete confirmation disabled.')));
                             }
-
                             final res = await app.deleteOneItem(_selected!);
                             if (res.deleted.isNotEmpty) {
                               messenger.showSnackBar(const SnackBar(content: Text('Deleted.')));
                               setState(() => _selected = null);
                               await _runSearch();
                             } else {
-                              messenger.showSnackBar(const SnackBar(content: Text('Failed to delete file (e.g. no permissions).')));
+                              messenger.showSnackBar(const SnackBar(content: Text('Failed to delete.')));
                             }
                           },
+                          loadTags: () => app.items!.listTagsForItem(_selected!.id),
+                          loadKeyValues: () => app.items!.listKeyValuesForItem(_selected!.id),
                         ),
                       ),
                     ],
@@ -462,13 +443,15 @@ class _SearchScreenState extends State<SearchScreen> {
           TagFilterPanel(
             selectedSimpleTags: _simpleSelected,
             selectedKeyValues: _kvSelected,
-            onApply: () {
+            onApply: (minMatch) {
+              setState(() => _tagMinMatch = minMatch);
               _runSearch();
             },
             onClear: () {
               setState(() {
                 _simpleSelected.clear();
                 _kvSelected.clear();
+                _tagMinMatch = 0;
               });
             },
             onClose: () {
@@ -640,100 +623,6 @@ class _ItemsGrid extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-
-class _DetailsPanel extends StatelessWidget {
-  final MediaItem item;
-  final Directory libraryFilesDir;
-  final VoidCallback onOpen;
-  final VoidCallback onExport;
-  final VoidCallback onMove;
-  final VoidCallback onTags;
-  final VoidCallback onDelete;
-
-  const _DetailsPanel({
-    required this.item,
-    required this.libraryFilesDir,
-    required this.onOpen,
-    required this.onExport,
-    required this.onMove,
-    required this.onTags,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.read<AppState>();
-    final filePath = LibraryFolders.absPath(libraryFilesDir, item.storedRelPath);
-
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Details', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          if (item.type == ItemType.image)
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(File(filePath), fit: BoxFit.contain),
-              ),
-            )
-          else
-            Expanded(
-              child: Center(
-                child: Icon(item.type == ItemType.video ? Icons.movie : Icons.insert_drive_file, size: 72),
-              ),
-            ),
-          const SizedBox(height: 12),
-          Text(item.originalName, style: Theme.of(context).textTheme.bodyLarge),
-          const SizedBox(height: 6),
-          Text('SHA256: ${item.sha256.substring(0, 12)}…'),
-          const SizedBox(height: 10),
-          FilledButton.icon(onPressed: onOpen, icon: const Icon(Icons.open_in_new), label: const Text('Open in system')),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onExport, icon: const Icon(Icons.download), label: const Text('Export to disk')),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onMove, icon: const Icon(Icons.drive_file_move), label: const Text('Move')),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onTags, icon: const Icon(Icons.sell), label: const Text('Tags')),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: onDelete, icon: const Icon(Icons.delete), label: const Text('Delete')),
-          const SizedBox(height: 10),
-          FutureBuilder<List<Tag>>(
-            future: app.items!.listTagsForItem(item.id),
-            builder: (ctx, snap) {
-              final tags = snap.data ?? const <Tag>[];
-              return Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final t in tags) Chip(label: Text(t.name)),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 6),
-          FutureBuilder<List<TagKeyValue>>(
-            future: app.items!.listKeyValuesForItem(item.id),
-            builder: (ctx, snap) {
-              final kv = snap.data ?? const <TagKeyValue>[];
-              if (kv.isEmpty) return const SizedBox.shrink();
-              return Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final v in kv) Chip(label: Text(formatKeyValueChip(v))),
-                ],
-              );
-            },
-          ),
-        ],
-      ),
     );
   }
 }

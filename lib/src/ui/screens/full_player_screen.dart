@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
@@ -11,19 +12,6 @@ import '../../core/library_folders.dart';
 import '../../core/models.dart';
 import '../widgets/media_player_widget.dart';
 import '../widgets/tag_manager_dialog.dart';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FullPlayerScreen — Option C
-// Layout: [VideoArea | Details?] / [Filmstrip]
-// Fixes vs v1:
-//   - Side nav arrows have top offset so they don't cover the top bar
-//   - Back button always accessible via top bar (not hidden behind arrows)
-//   - Loop + autoplay next toggles
-//   - Keyboard: left/right = ±10s on video, not prev/next item
-//     (prev/next item = , / . keys, or filmstrip click)
-//   - Fullscreen = hide top bar + filmstrip for immersive in-window view
-//   - GIF display works (handled by MediaPlayerWidget)
-// ─────────────────────────────────────────────────────────────────────────────
 
 class FullPlayerScreen extends StatefulWidget {
   final MediaItem initialItem;
@@ -52,6 +40,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   bool _loopEnabled = false;
   bool _autoplayNext = false;
 
+  // Hover-to-show chrome in fullscreen
+  bool _chromeVisible = true;
+  Timer? _hideTimer;
+
   StreamSubscription<void>? _completedSub;
   final ScrollController _filmstripScroll = ScrollController();
   final FocusNode _rootFocus = FocusNode();
@@ -68,6 +60,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   @override
   void dispose() {
     _completedSub?.cancel();
+    _hideTimer?.cancel();
+    // Restore window chrome when leaving screen in fullscreen
+    if (_isFullscreen) {
+      windowManager.setFullScreen(false);
+      windowManager.setTitleBarStyle(TitleBarStyle.normal);
+    }
     _playerController.dispose();
     _filmstripScroll.dispose();
     _rootFocus.dispose();
@@ -76,7 +74,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   void _subscribeToCompletion() {
     _completedSub = _playerController.player.stream.completed.listen((completed) {
-      if (!completed) return;
+      if (!completed || !mounted) return;
       if (_loopEnabled) {
         _playerController.player.seek(Duration.zero);
         _playerController.player.play();
@@ -89,9 +87,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   Future<void> _openItem(MediaItem item) async {
     final filePath = LibraryFolders.absPath(widget.libraryFilesDir, item.storedRelPath);
     await _playerController.open(item, filePath);
+    // Autoplay in full player for video
+    if (!_playerController.isStaticImage && !_playerController.isGif) {
+      _playerController.player.play();
+    }
     if (mounted) setState(() => _current = item);
     _scrollFilmstripToItem(item);
-    // Re-focus so keyboard shortcuts keep working
     _rootFocus.requestFocus();
   }
 
@@ -100,7 +101,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     if (index < 0) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_filmstripScroll.hasClients) return;
-      const itemW = 126.0; // thumb width + margin
+      const itemW = 126.0;
       final offset = (index * itemW) - (_filmstripScroll.position.viewportDimension / 2) + itemW / 2;
       _filmstripScroll.animateTo(
         offset.clamp(0.0, _filmstripScroll.position.maxScrollExtent),
@@ -118,25 +119,81 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _openItem(widget.allItems[newIndex]);
   }
 
+  /// Called by MediaPlayerWidget when image/GIF 10s timer ends
+  void _onMediaTimerEnd() {
+    if (!_autoplayNext) return;
+    _navigateToItem(1);
+  }
+
   void _toggleDetails() => setState(() => _detailsVisible = !_detailsVisible);
 
-  void _toggleFullscreen() => setState(() => _isFullscreen = !_isFullscreen);
+  Rect? _windowRectBeforeFullscreen;
+
+  Future<void> _toggleFullscreen() async {
+    final entering = !_isFullscreen;
+    if (entering) {
+      // Save current position/size then go borderless-maximized
+      _windowRectBeforeFullscreen = await windowManager.getBounds();
+      await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+      await windowManager.setFullScreen(true);
+    } else {
+      // Restore window
+      await windowManager.setFullScreen(false);
+      await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+      if (_windowRectBeforeFullscreen != null) {
+        await windowManager.setBounds(_windowRectBeforeFullscreen!);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _isFullscreen = entering;
+      if (!entering) {
+        _chromeVisible = true;
+        _hideTimer?.cancel();
+      }
+    });
+    if (entering) _scheduleChromeHide();
+  }
+
+  void _onMouseMove() {
+    if (!_isFullscreen) return;
+    _hideTimer?.cancel();
+    if (!_chromeVisible) setState(() => _chromeVisible = true);
+    _scheduleChromeHide();
+  }
+
+  void _scheduleChromeHide() {
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _isFullscreen) setState(() => _chromeVisible = false);
+    });
+  }
 
   void _handleKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
     switch (event.logicalKey) {
-      // Prev/next item
-      case LogicalKeyboardKey.comma:
-        _navigateToItem(-1);
-        break;
-      case LogicalKeyboardKey.period:
-        _navigateToItem(1);
-        break;
+      case LogicalKeyboardKey.comma:  _navigateToItem(-1); break;
+      case LogicalKeyboardKey.period: _navigateToItem(1); break;
       case LogicalKeyboardKey.escape:
         if (_isFullscreen) _toggleFullscreen();
+        else Navigator.of(context).pop();
+        break;
+      case LogicalKeyboardKey.f11:
+      case LogicalKeyboardKey.keyF:
+        _toggleFullscreen();
+        break;
+      case LogicalKeyboardKey.keyL:
+        setState(() {
+          _loopEnabled = !_loopEnabled;
+          if (_loopEnabled) _autoplayNext = false;
+        });
+        break;
+      case LogicalKeyboardKey.keyN:
+        setState(() {
+          _autoplayNext = !_autoplayNext;
+          if (_autoplayNext) _loopEnabled = false;
+        });
         break;
     }
-    // Note: space / ← / → / M are handled inside MediaPlayerWidget
   }
 
   Future<void> _showTagsForItem(MediaItem item) async {
@@ -147,9 +204,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         initialSimpleTagIds: curSimple, initialKeyValueIds: curKv);
     if (picked == null) return;
     await app.setTagsForItem(
-        itemId: item.id,
-        simpleTagIds: picked.simpleTagIds,
-        keyValueIds: picked.keyValueIds);
+        itemId: item.id, simpleTagIds: picked.simpleTagIds, keyValueIds: picked.keyValueIds);
     if (mounted) setState(() {});
   }
 
@@ -161,19 +216,34 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       onKeyEvent: _handleKey,
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: Column(
-          children: [
-            if (!_isFullscreen) _buildTopBar(),
-            Expanded(
-              child: Row(
-                children: [
-                  Expanded(child: _buildVideoArea()),
-                  if (_detailsVisible && !_isFullscreen) _buildDetailsPanel(),
-                ],
+        body: MouseRegion(
+          onHover: (_) => _onMouseMove(),
+          child: Column(
+            children: [
+              // Top bar — hidden when fullscreen + chrome hidden
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                height: (!_isFullscreen || _chromeVisible) ? 44 : 0,
+                child: _buildTopBar(),
               ),
-            ),
-            if (!_isFullscreen) _buildFilmstrip(),
-          ],
+
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(child: _buildVideoArea()),
+                    if (_detailsVisible && !_isFullscreen) _buildDetailsPanel(),
+                  ],
+                ),
+              ),
+
+              // Filmstrip — hidden in fullscreen
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                height: (!_isFullscreen || _chromeVisible) ? 110 : 0,
+                child: _buildFilmstrip(),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -182,74 +252,33 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
   // ── Top bar ────────────────────────────────────────────────────────────────
 
   Widget _buildTopBar() {
-    final cs = Theme.of(context).colorScheme;
     return Container(
       height: 44,
       color: const Color(0xFF0D0D0D),
       child: Row(
         children: [
-          // Back — always on left, never covered
-          TextButton.icon(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back, size: 18),
-            label: const Text('Library'),
-            style: TextButton.styleFrom(foregroundColor: Colors.white70),
-          ),
-          const SizedBox(width: 8),
-
-          // Item name
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              _current.originalName,
-              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+            child: Text(_current.originalName,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
-
-          // Loop
-          Tooltip(
-            message: _loopEnabled ? 'Loop: on' : 'Loop: off',
-            child: IconButton(
-              onPressed: () => setState(() {
-                _loopEnabled = !_loopEnabled;
-                if (_loopEnabled) _autoplayNext = false;
-              }),
-              icon: Icon(Icons.repeat, color: _loopEnabled ? cs.primary : Colors.white38),
-            ),
-          ),
-
-          // Autoplay next
-          Tooltip(
-            message: _autoplayNext ? 'Autoplay next: on' : 'Autoplay next: off',
-            child: IconButton(
-              onPressed: () => setState(() {
-                _autoplayNext = !_autoplayNext;
-                if (_autoplayNext) _loopEnabled = false;
-              }),
-              icon: Icon(Icons.skip_next, color: _autoplayNext ? cs.primary : Colors.white38),
-            ),
-          ),
-
-          // Details toggle
-          Tooltip(
-            message: _detailsVisible ? 'Hide details' : 'Show details',
-            child: IconButton(
-              onPressed: _toggleDetails,
-              icon: Icon(
-                _detailsVisible ? Icons.info : Icons.info_outline,
-                color: _detailsVisible ? cs.primary : Colors.white54,
+          // Details toggle — hidden in fullscreen (no details panel there)
+          if (!_isFullscreen)
+            Tooltip(
+              message: _detailsVisible ? 'Hide details' : 'Show details',
+              child: IconButton(
+                onPressed: _toggleDetails,
+                icon: Icon(_detailsVisible ? Icons.info : Icons.info_outline,
+                    color: _detailsVisible
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.white54),
               ),
             ),
-          ),
-
-          // Fullscreen
-          Tooltip(
-            message: _isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen',
-            child: IconButton(
-              onPressed: _toggleFullscreen,
-              icon: Icon(_isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen, color: Colors.white70),
-            ),
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close, size: 20, color: Colors.white70),
+            tooltip: 'Close',
           ),
         ],
       ),
@@ -260,14 +289,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Widget _buildVideoArea() {
     final filePath = LibraryFolders.absPath(widget.libraryFilesDir, _current.storedRelPath);
-    // Top bar height — used to offset nav arrows so they don't cover the top bar
-    const topBarH = 44.0;
-    // Bottom filmstrip height
-    const filmstripH = 110.0;
 
     return Stack(
       children: [
-        // Player
+        // Player — loop/autoplay/fullscreen buttons are INSIDE the controls bar
         Positioned.fill(
           child: MediaPlayerWidget(
             key: ValueKey(_current.id),
@@ -275,44 +300,38 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             filePath: filePath,
             controller: _playerController,
             compact: false,
+            controlsVisible: !_isFullscreen || _chromeVisible,
+            loopEnabled: _loopEnabled,
+            autoplayNext: _autoplayNext,
+            onLoopToggle: () => setState(() {
+              _loopEnabled = !_loopEnabled;
+              if (_loopEnabled) _autoplayNext = false;
+            }),
+            onAutoplayToggle: () => setState(() {
+              _autoplayNext = !_autoplayNext;
+              if (_autoplayNext) _loopEnabled = false;
+            }),
+            onFullscreen: _toggleFullscreen,
+            onTimerEnd: _onMediaTimerEnd,
+            autoStartTimer: _autoplayNext,
           ),
         ),
 
-        // Fullscreen overlay buttons (top-right) — only when fullscreen
-        if (_isFullscreen)
-          Positioned(
-            top: 8, right: 8,
-            child: Row(
-              children: [
-                _IconOverlay(icon: Icons.info_outline, onTap: _toggleDetails),
-                const SizedBox(width: 4),
-                _IconOverlay(icon: Icons.repeat, onTap: () => setState(() => _loopEnabled = !_loopEnabled)),
-                const SizedBox(width: 4),
-                _IconOverlay(icon: Icons.fullscreen_exit, onTap: _toggleFullscreen),
-                const SizedBox(width: 4),
-                _IconOverlay(icon: Icons.arrow_back, onTap: () => Navigator.of(context).pop()),
-              ],
-            ),
-          ),
-
-        // Prev arrow — offset from top so it doesn't cover the top bar
-        // When fullscreen the top bar is hidden so offset is 0
+        // Prev/Next side arrows — 72px bottom offset so they never cover the controls bar
         Positioned(
           left: 0,
-          top: _isFullscreen ? 0 : topBarH,
-          bottom: _isFullscreen ? 0 : filmstripH,
+          top: _isFullscreen ? 0 : 44,
+          bottom: 72,
           child: _SideNavButton(
             icon: Icons.chevron_left,
             onTap: () => _navigateToItem(-1),
             enabled: widget.allItems.first.id != _current.id,
           ),
         ),
-
-        // Next arrow — same offsets
         Positioned(
           right: 0,
-          top: _isFullscreen ? 0 : topBarH,
-          bottom: _isFullscreen ? 0 : filmstripH,
+          top: _isFullscreen ? 0 : 44,
+          bottom: 72,
           child: _SideNavButton(
             icon: Icons.chevron_right,
             onTap: () => _navigateToItem(1),
@@ -327,81 +346,61 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Widget _buildDetailsPanel() {
     final app = context.read<AppState>();
-
     return Container(
       width: 260,
       color: const Color(0xFF111111),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFF2A2A2A))),
-            ),
-            child: Row(
-              children: [
-                const Text('Details',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                const Spacer(),
-                InkWell(onTap: _toggleDetails,
-                    child: const Icon(Icons.close, size: 16, color: Colors.white54)),
-              ],
-            ),
+            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFF2A2A2A)))),
+            child: Row(children: [
+              const Text('Details', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              const Spacer(),
+              InkWell(onTap: _toggleDetails,
+                  child: const Icon(Icons.close, size: 16, color: Colors.white54)),
+            ]),
           ),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _DetailRow('Name', _current.originalName),
-                  _DetailRow('Type', _current.type.name),
-                  _DetailRow('Size', _formatBytes(_current.sizeBytes)),
-                  _DetailRow('Added', _formatDate(_current.createdAt)),
-                  const SizedBox(height: 12),
-                  const Text('Tags',
-                      style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
-                  FutureBuilder<List<Tag>>(
-                    future: app.items!.listTagsForItem(_current.id),
-                    builder: (ctx, snap) {
-                      final tags = snap.data ?? [];
-                      if (tags.isEmpty) {
-                        return const Text('No tags',
-                            style: TextStyle(color: Colors.white38, fontSize: 12));
-                      }
-                      return Wrap(
-                        spacing: 6, runSpacing: 6,
-                        children: [for (final t in tags) _TagChip(label: t.name)],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  FutureBuilder<List<TagKeyValue>>(
-                    future: app.items!.listKeyValuesForItem(_current.id),
-                    builder: (ctx, snap) {
-                      final kv = snap.data ?? [];
-                      if (kv.isEmpty) return const SizedBox.shrink();
-                      return Wrap(
-                        spacing: 6, runSpacing: 6,
-                        children: [for (final v in kv) _TagChip(label: formatKeyValueChip(v))],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _showTagsForItem(_current),
-                    icon: const Icon(Icons.sell, size: 16),
-                    label: const Text('Edit tags'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white70,
-                      side: const BorderSide(color: Colors.white24),
-                    ),
-                  ),
-                ],
-              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _DetailRow('Name', _current.originalName),
+                _DetailRow('Type', _current.type.name),
+                _DetailRow('Size', _fmtBytes(_current.sizeBytes)),
+                _DetailRow('Added', _fmtDate(_current.createdAt)),
+                const SizedBox(height: 12),
+                const Text('Tags', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                FutureBuilder<List<Tag>>(
+                  future: app.items!.listTagsForItem(_current.id),
+                  builder: (ctx, snap) {
+                    final tags = snap.data ?? [];
+                    if (tags.isEmpty) return const Text('No tags', style: TextStyle(color: Colors.white38, fontSize: 12));
+                    return Wrap(spacing: 6, runSpacing: 6,
+                        children: [for (final t in tags) _TagChip(label: t.name)]);
+                  },
+                ),
+                const SizedBox(height: 8),
+                FutureBuilder<List<TagKeyValue>>(
+                  future: app.items!.listKeyValuesForItem(_current.id),
+                  builder: (ctx, snap) {
+                    final kv = snap.data ?? [];
+                    if (kv.isEmpty) return const SizedBox.shrink();
+                    return Wrap(spacing: 6, runSpacing: 6,
+                        children: [for (final v in kv) _TagChip(label: formatKeyValueChip(v))]);
+                  },
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _showTagsForItem(_current),
+                  icon: const Icon(Icons.sell, size: 16),
+                  label: const Text('Edit tags'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white70, side: const BorderSide(color: Colors.white24)),
+                ),
+              ]),
             ),
           ),
         ],
@@ -413,7 +412,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
 
   Widget _buildFilmstrip() {
     return Container(
-      height: 110,
       color: const Color(0xFF0D0D0D),
       child: ListView.builder(
         controller: _filmstripScroll,
@@ -431,10 +429,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           if (hasThumb) {
             thumb = Image.file(thumbFile, fit: BoxFit.cover);
           } else if (item.type == ItemType.image) {
-            thumb = Image.file(File(filePath), fit: BoxFit.cover,
-              cacheWidth: 160,
-              errorBuilder: (_, __, ___) => const Icon(Icons.image, color: Colors.white30, size: 28),
-            );
+            thumb = Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 160,
+                errorBuilder: (_, __, ___) => const Icon(Icons.image, color: Colors.white30, size: 28));
           } else {
             thumb = const Center(child: Icon(Icons.movie, color: Colors.white30, size: 28));
           }
@@ -454,17 +450,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(5),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    thumb,
-                    if (isActive)
-                      Container(
-                        color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
-                        child: const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 24)),
-                      ),
-                  ],
-                ),
+                child: Stack(fit: StackFit.expand, children: [
+                  thumb,
+                  if (isActive)
+                    Container(
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+                      child: const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 24)),
+                    ),
+                ]),
               ),
             ),
           );
@@ -473,16 +466,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     );
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  String _formatBytes(int bytes) {
+  String _fmtBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1048576) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     if (bytes < 1073741824) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
     return '${(bytes / 1073741824).toStringAsFixed(2)} GB';
   }
 
-  String _formatDate(DateTime dt) =>
+  String _fmtDate(DateTime dt) =>
       '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
 }
 
@@ -498,15 +489,10 @@ class _DetailRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 54,
-            child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11))),
-          Expanded(
-            child: Text(value, style: const TextStyle(color: Colors.white70, fontSize: 11))),
-        ],
-      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(width: 54, child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11))),
+        Expanded(child: Text(value, style: const TextStyle(color: Colors.white70, fontSize: 11))),
+      ]),
     );
   }
 }
@@ -523,8 +509,7 @@ class _TagChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
       ),
-      child: Text(label,
-          style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 11)),
+      child: Text(label, style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 11)),
     );
   }
 }
@@ -551,29 +536,10 @@ class _SideNavButtonState extends State<_SideNavButton> {
           opacity: !widget.enabled ? 0.0 : _hovered ? 1.0 : 0.0,
           duration: const Duration(milliseconds: 150),
           child: Container(
-            width: 48,
-            color: Colors.black45,
+            width: 48, color: Colors.black45,
             child: Center(child: Icon(widget.icon, color: Colors.white, size: 32)),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _IconOverlay extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  const _IconOverlay({required this.icon, required this.onTap});
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(4)),
-        child: Icon(icon, color: Colors.white, size: 18),
       ),
     );
   }
