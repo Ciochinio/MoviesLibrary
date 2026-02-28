@@ -12,6 +12,7 @@ import 'db.dart';
 import 'models.dart';
 import 'portable_paths.dart';
 import 'repositories.dart';
+import 'raffle_repository.dart';
 import 'app_settings.dart';
 import 'library_folders.dart';
 
@@ -24,6 +25,7 @@ class AppState extends ChangeNotifier {
   TagRepo? tags;
   ItemRepo? items;
   NoteRepo? notes;
+  RaffleRepository? raffle;
 
 
   AppSettings settings = AppSettings.defaults;
@@ -94,6 +96,7 @@ class AppState extends ChangeNotifier {
     tags = TagRepo(_db!);
     items = ItemRepo(_db!, paths!.filesDir);
     notes = NoteRepo(_db!, paths!.attachmentsDir);
+    raffle = RaffleRepository(_db!);
 
     await _ensureDefaults();
     await _rebuildFromSidecarsIfEmpty();

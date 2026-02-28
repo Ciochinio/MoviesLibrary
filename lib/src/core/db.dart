@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 9,
+        version: 10,
         onConfigure: (db) async {
           // Enforce foreign keys (needed for ON DELETE CASCADE).
           await db.execute('PRAGMA foreign_keys = ON');
@@ -43,6 +43,9 @@ class AppDb {
           }
           if (oldVersion < 9) {
             await _upgradeToV9(db);
+          }
+          if (oldVersion < 10) {
+            await _upgradeToV10(db);
           }
         },
       ),
@@ -169,16 +172,15 @@ class AppDb {
       );
     ''');
 
-
-// Indexes for faster browsing & tag search
-await db.execute('CREATE INDEX idx_subcategories_category_id ON subcategories(category_id);');
-await db.execute('CREATE INDEX idx_items_subcategory_id ON items(subcategory_id);');
-await db.execute('CREATE INDEX idx_item_tags_tag_id ON item_tags(tag_id);');
-await db.execute('CREATE INDEX idx_item_tags_item_id ON item_tags(item_id);');
-await db.execute('CREATE INDEX idx_tag_key_values_key_id ON tag_key_values(key_id);');
-await db.execute('CREATE INDEX idx_item_kv_kv_id ON item_tag_key_values(key_value_id);');
-await db.execute('CREATE INDEX idx_item_kv_item_id ON item_tag_key_values(item_id);');
-await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
+    // Indexes for faster browsing & tag search
+    await db.execute('CREATE INDEX idx_subcategories_category_id ON subcategories(category_id);');
+    await db.execute('CREATE INDEX idx_items_subcategory_id ON items(subcategory_id);');
+    await db.execute('CREATE INDEX idx_item_tags_tag_id ON item_tags(tag_id);');
+    await db.execute('CREATE INDEX idx_item_tags_item_id ON item_tags(item_id);');
+    await db.execute('CREATE INDEX idx_tag_key_values_key_id ON tag_key_values(key_id);');
+    await db.execute('CREATE INDEX idx_item_kv_kv_id ON item_tag_key_values(key_value_id);');
+    await db.execute('CREATE INDEX idx_item_kv_item_id ON item_tag_key_values(item_id);');
+    await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
 
     // Auto-tags: tags automatically applied to new items in a subcategory
     await db.execute('''
@@ -201,6 +203,61 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
       );
     ''');
 
+    // Raffle tables
+    await db.execute('''
+      CREATE TABLE raffle_playlists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE raffle_playlist_segments (
+        id TEXT PRIMARY KEY,
+        playlist_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(playlist_id) REFERENCES raffle_playlists(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE raffle_segment_simple_tags (
+        segment_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (segment_id, tag_id),
+        FOREIGN KEY(segment_id) REFERENCES raffle_playlist_segments(id) ON DELETE CASCADE,
+        FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE raffle_segment_key_values (
+        segment_id TEXT NOT NULL,
+        key_value_id TEXT NOT NULL,
+        PRIMARY KEY (segment_id, key_value_id),
+        FOREIGN KEY(segment_id) REFERENCES raffle_playlist_segments(id) ON DELETE CASCADE,
+        FOREIGN KEY(key_value_id) REFERENCES tag_key_values(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE raffle_segment_categories (
+        segment_id TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        subcategory_id TEXT,
+        FOREIGN KEY(segment_id) REFERENCES raffle_playlist_segments(id) ON DELETE CASCADE,
+        FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE CASCADE,
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE SET NULL
+      );
+    ''');
+
+    await db.execute('CREATE INDEX idx_raffle_segments_playlist ON raffle_playlist_segments(playlist_id);');
+    await db.execute('CREATE INDEX idx_raffle_seg_tags ON raffle_segment_simple_tags(segment_id);');
+    await db.execute('CREATE INDEX idx_raffle_seg_kv ON raffle_segment_key_values(segment_id);');
+    await db.execute('CREATE INDEX idx_raffle_seg_cats ON raffle_segment_categories(segment_id);');
   }
 
   Future<void> _upgradeToV2(Database db) async {
@@ -244,32 +301,26 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
   }
 
   Future<void> _upgradeToV3(Database db) async {
-    // Add description columns to categories, subcategories, tags, and tag_keys
-    // Add sort_order to tag_keys
-    
-    // Check and add columns if they don't exist (safe migration)
     try {
       await db.execute("ALTER TABLE categories ADD COLUMN description TEXT DEFAULT ''");
-    } catch (_) {
-      // Column already exists
-    }
-    
+    } catch (_) {}
+
     try {
       await db.execute("ALTER TABLE subcategories ADD COLUMN description TEXT DEFAULT ''");
     } catch (_) {}
-    
+
     try {
       await db.execute("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
     } catch (_) {}
-    
+
     try {
       await db.execute("ALTER TABLE tag_keys ADD COLUMN description TEXT DEFAULT ''");
     } catch (_) {}
-    
+
     try {
       await db.execute("ALTER TABLE tag_keys ADD COLUMN sort_order INTEGER DEFAULT 0");
     } catch (_) {}
-    
+
     try {
       await db.execute("ALTER TABLE tags ADD COLUMN sort_order INTEGER DEFAULT 0");
     } catch (_) {}
@@ -278,44 +329,34 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
   Future<void> _upgradeToV4(Database db) async {
     try {
       await db.execute("ALTER TABLE tags ADD COLUMN sort_order INTEGER DEFAULT 0");
-    } catch (_) {
-      // Column already exists
-    }
-    
+    } catch (_) {}
+
     try {
       await db.execute("ALTER TABLE tag_key_values ADD COLUMN description TEXT DEFAULT ''");
-    } catch (_) {
-      // Column already exists
-    }
+    } catch (_) {}
   }
 
   Future<void> _upgradeToV5(Database db) async {
     try {
       await db.execute("ALTER TABLE tag_key_values ADD COLUMN description TEXT DEFAULT ''");
-    } catch (_) {
-      // Column already exists
-    }
+    } catch (_) {}
   }
 
   Future<void> _upgradeToV6(Database db) async {
-    // 1. Add sort_order to categories and subcategories
     try {
       await db.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER DEFAULT 0");
     } catch (_) {}
-    
+
     try {
       await db.execute("ALTER TABLE subcategories ADD COLUMN sort_order INTEGER DEFAULT 0");
     } catch (_) {}
 
-    // 2. Normalize sort_order for categories (assign 0, 1, 2, ... based on current name order)
     final cats = await db.query('categories', orderBy: 'name COLLATE NOCASE');
     for (int i = 0; i < cats.length; i++) {
       await db.update('categories', {'sort_order': i}, where: 'id=?', whereArgs: [cats[i]['id']]);
     }
 
-    // 3. Normalize sort_order for subcategories per category
     final allSubs = await db.query('subcategories', orderBy: 'name COLLATE NOCASE');
-    // Group by category
     final byCat = <String, List<Map<String, Object?>>>{};
     for (final s in allSubs) {
       final catId = s['category_id'] as String;
@@ -327,36 +368,44 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
       }
     }
 
-    // 4. Normalize sort_order for tags (THE FIX for all-zero sort_order bug)
     final tags = await db.query('tags', orderBy: 'sort_order ASC, name COLLATE NOCASE');
     for (int i = 0; i < tags.length; i++) {
       await db.update('tags', {'sort_order': i}, where: 'id=?', whereArgs: [tags[i]['id']]);
     }
 
-    // 5. Normalize sort_order for tag_keys
     final keys = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
     for (int i = 0; i < keys.length; i++) {
       await db.update('tag_keys', {'sort_order': i}, where: 'id=?', whereArgs: [keys[i]['id']]);
     }
   }
 
-  Future<void> _upgradeToV9(Database db) async {
-    try {
-      await db.execute('ALTER TABLE items ADD COLUMN is_favourite INTEGER NOT NULL DEFAULT 0');
-    } catch (_) {}
+  Future<void> _upgradeToV7(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS subcategory_auto_tags (
+        subcategory_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (subcategory_id, tag_id),
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS subcategory_auto_key_values (
+        subcategory_id TEXT NOT NULL,
+        key_value_id TEXT NOT NULL,
+        PRIMARY KEY (subcategory_id, key_value_id),
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        FOREIGN KEY(key_value_id) REFERENCES tag_key_values(id) ON DELETE CASCADE
+      );
+    ''');
   }
 
   Future<void> _upgradeToV8(Database db) async {
-    // Add sort_order to tag_key_values for reorderable values within keys.
     try {
       await db.execute('ALTER TABLE tag_key_values ADD COLUMN sort_order INTEGER DEFAULT 0');
-    } catch (_) {
-      // Column already exists — safe to ignore.
-    }
+    } catch (_) {}
 
-    // Normalize: assign sequential sort_order (0, 1, 2...) per key, alphabetically.
-    // This ensures existing values have a deterministic order from day one
-    // rather than all sitting at 0.
     final keys = await db.query('tag_keys', columns: ['id']);
     for (final key in keys) {
       final keyId = key['id'] as String;
@@ -377,26 +426,66 @@ await db.execute('CREATE INDEX idx_notes_updated_at ON notes(updated_at);');
     }
   }
 
-  Future<void> _upgradeToV7(Database db) async {
-    // Auto-tags: tags automatically applied to new items in a subcategory
+  Future<void> _upgradeToV9(Database db) async {
+    try {
+      await db.execute('ALTER TABLE items ADD COLUMN is_favourite INTEGER NOT NULL DEFAULT 0');
+    } catch (_) {}
+  }
+
+  Future<void> _upgradeToV10(Database db) async {
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS subcategory_auto_tags (
-        subcategory_id TEXT NOT NULL,
+      CREATE TABLE IF NOT EXISTS raffle_playlists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS raffle_playlist_segments (
+        id TEXT PRIMARY KEY,
+        playlist_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(playlist_id) REFERENCES raffle_playlists(id) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS raffle_segment_simple_tags (
+        segment_id TEXT NOT NULL,
         tag_id TEXT NOT NULL,
-        PRIMARY KEY (subcategory_id, tag_id),
-        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        PRIMARY KEY (segment_id, tag_id),
+        FOREIGN KEY(segment_id) REFERENCES raffle_playlist_segments(id) ON DELETE CASCADE,
         FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
       );
     ''');
 
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS subcategory_auto_key_values (
-        subcategory_id TEXT NOT NULL,
+      CREATE TABLE IF NOT EXISTS raffle_segment_key_values (
+        segment_id TEXT NOT NULL,
         key_value_id TEXT NOT NULL,
-        PRIMARY KEY (subcategory_id, key_value_id),
-        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE,
+        PRIMARY KEY (segment_id, key_value_id),
+        FOREIGN KEY(segment_id) REFERENCES raffle_playlist_segments(id) ON DELETE CASCADE,
         FOREIGN KEY(key_value_id) REFERENCES tag_key_values(id) ON DELETE CASCADE
       );
     ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS raffle_segment_categories (
+        segment_id TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        subcategory_id TEXT,
+        FOREIGN KEY(segment_id) REFERENCES raffle_playlist_segments(id) ON DELETE CASCADE,
+        FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE CASCADE,
+        FOREIGN KEY(subcategory_id) REFERENCES subcategories(id) ON DELETE SET NULL
+      );
+    ''');
+
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_raffle_segments_playlist ON raffle_playlist_segments(playlist_id);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_raffle_seg_tags ON raffle_segment_simple_tags(segment_id);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_raffle_seg_kv ON raffle_segment_key_values(segment_id);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_raffle_seg_cats ON raffle_segment_categories(segment_id);');
   }
 }

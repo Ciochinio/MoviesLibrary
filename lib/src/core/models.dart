@@ -134,3 +134,49 @@ class NoteAttachment {
     required this.sizeBytes,
   });
 }
+
+// ─── Raffle models ─────────────────────────────────────────────────────────────
+
+class RafflePlaylist {
+  final String id;
+  final String name;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  RafflePlaylist({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+}
+
+class RaffleSegment {
+  final String id;
+  final String playlistId;
+  final String label;
+  final int sortOrder;
+  final List<String> simpleTagIds;
+  final List<String> keyValueIds;
+  final List<RaffleSegmentCategory> categories;
+
+  RaffleSegment({
+    required this.id,
+    required this.playlistId,
+    required this.label,
+    required this.sortOrder,
+    this.simpleTagIds = const [],
+    this.keyValueIds = const [],
+    this.categories = const [],
+  });
+}
+
+class RaffleSegmentCategory {
+  final String categoryId;
+  final String? subcategoryId; // null = whole category
+
+  RaffleSegmentCategory({
+    required this.categoryId,
+    this.subcategoryId,
+  });
+}

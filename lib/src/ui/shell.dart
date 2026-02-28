@@ -10,6 +10,7 @@ import 'screens/tags_screen.dart';
 import 'screens/categories_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/favourites_screen.dart';
+import 'screens/raffle_screen.dart';
 import 'widgets/import_overlay_panel.dart';
 
 class AppShell extends StatefulWidget {
@@ -72,6 +73,7 @@ class _AppShellState extends State<AppShell> {
     final pages = [
       const LibraryScreen(),
       const FavouritesScreen(),
+      const RaffleScreen(),
       const SearchScreen(),
       const NotesScreen(),
       const TagsScreen(),
@@ -96,6 +98,7 @@ class _AppShellState extends State<AppShell> {
                   destinations: const [
                     NavigationRailDestination(icon: Icon(Icons.video_library), label: Text('Library')),
                     NavigationRailDestination(icon: Icon(Icons.favorite), label: Text('Favourites')),
+                    NavigationRailDestination(icon: Icon(Icons.casino), label: Text('Raffle')),
                     NavigationRailDestination(icon: Icon(Icons.search), label: Text('Search')),
                     NavigationRailDestination(icon: Icon(Icons.note_alt), label: Text('Notes')),
                     NavigationRailDestination(icon: Icon(Icons.sell), label: Text('Tags')),
