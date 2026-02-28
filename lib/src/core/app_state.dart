@@ -13,6 +13,7 @@ import 'models.dart';
 import 'portable_paths.dart';
 import 'repositories.dart';
 import 'raffle_repository.dart';
+import 'quick_roll_repository.dart';
 import 'app_settings.dart';
 import 'library_folders.dart';
 
@@ -26,6 +27,7 @@ class AppState extends ChangeNotifier {
   ItemRepo? items;
   NoteRepo? notes;
   RaffleRepository? raffle;
+  QuickRollRepository? quickRoll;
 
 
   AppSettings settings = AppSettings.defaults;
@@ -97,6 +99,7 @@ class AppState extends ChangeNotifier {
     items = ItemRepo(_db!, paths!.filesDir);
     notes = NoteRepo(_db!, paths!.attachmentsDir);
     raffle = RaffleRepository(_db!);
+    quickRoll = QuickRollRepository(_db!);
 
     await _ensureDefaults();
     await _rebuildFromSidecarsIfEmpty();

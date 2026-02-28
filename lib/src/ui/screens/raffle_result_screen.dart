@@ -11,6 +11,7 @@ import '../../core/library_folders.dart';
 import '../../core/models.dart';
 import '../widgets/shared_player_panel.dart';
 import '../widgets/tag_manager_dialog.dart';
+import '../widgets/raffle_media_grid.dart';
 
 class RaffleResultScreen extends StatefulWidget {
   final String segmentLabel;
@@ -42,7 +43,8 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
   Future<void> _loadUntagged() async {
     final app = context.read<AppState>();
     if (!app.isReady || widget.items.isEmpty) return;
-    final ids = await app.items!.listUntaggedItemIds(widget.items.map((e) => e.id).toList());
+    final ids = await app.items!
+        .listUntaggedItemIds(widget.items.map((e) => e.id).toList());
     if (mounted) setState(() => _untaggedIds = ids);
   }
 
@@ -50,30 +52,29 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
     final app = context.read<AppState>();
     final curSimple = await app.items!.listTagIdsForItem(item.id);
     final curKv = await app.items!.listKeyValueIdsForItem(item.id);
-    final picked = await showTagManagerDialog(
-      context,
-      initialSimpleTagIds: curSimple,
-      initialKeyValueIds: curKv,
-    );
+    final picked = await showTagManagerDialog(context,
+        initialSimpleTagIds: curSimple, initialKeyValueIds: curKv);
     if (picked == null || !mounted) return;
     await app.setTagsForItem(
-      itemId: item.id,
-      simpleTagIds: picked.simpleTagIds,
-      keyValueIds: picked.keyValueIds,
-    );
+        itemId: item.id,
+        simpleTagIds: picked.simpleTagIds,
+        keyValueIds: picked.keyValueIds);
     await _loadUntagged();
   }
 
   Future<void> _exportItem(MediaItem item) async {
     final app = context.read<AppState>();
-    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
+    final dir =
+        await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
     if (dir == null) return;
-    final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
+    final src =
+        File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
     if (!await src.exists()) return;
     final dest = _uniquePath(p.join(dir, item.originalName));
     await src.copy(dest);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Exported.')));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Exported.')));
   }
 
   String _uniquePath(String basePath) {
@@ -93,7 +94,6 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final theme = Theme.of(context);
-    final cs = theme.colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -102,10 +102,8 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
             const Icon(Icons.casino, size: 18),
             const SizedBox(width: 8),
             Flexible(
-              child: Text(
-                'Result: ${widget.segmentLabel}',
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text('Result: ${widget.segmentLabel}',
+                  overflow: TextOverflow.ellipsis),
             ),
             const SizedBox(width: 12),
             Text(
@@ -128,7 +126,7 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
           : Row(
               children: [
                 Expanded(
-                  child: _MediaGrid(
+                  child: RaffleMediaGrid(
                     items: widget.items,
                     selected: _selected,
                     untaggedIds: _untaggedIds,
@@ -138,11 +136,10 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
                 if (_selected != null && app.isReady) ...[
                   const VerticalDivider(width: 1),
                   GestureDetector(
-                    onHorizontalDragUpdate: (d) {
-                      setState(() {
-                        _panelWidth = (_panelWidth - d.delta.dx).clamp(220.0, 600.0);
-                      });
-                    },
+                    onHorizontalDragUpdate: (d) => setState(() {
+                      _panelWidth =
+                          (_panelWidth - d.delta.dx).clamp(220.0, 600.0);
+                    }),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.resizeColumn,
                       child: Container(width: 4, color: Colors.transparent),
@@ -172,10 +169,12 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
                                   title: const Text('Delete item?'),
                                   actions: [
                                     TextButton(
-                                        onPressed: () => Navigator.pop(ctx, false),
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
                                         child: const Text('Cancel')),
                                     FilledButton(
-                                        onPressed: () => Navigator.pop(ctx, true),
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
                                         child: const Text('Delete')),
                                   ],
                                 ),
@@ -185,8 +184,10 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
                         await app.deleteOneItem(_selected!);
                         setState(() => _selected = null);
                       },
-                      loadTags: () => app.items!.listTagsForItem(_selected!.id),
-                      loadKeyValues: () => app.items!.listKeyValuesForItem(_selected!.id),
+                      loadTags: () =>
+                          app.items!.listTagsForItem(_selected!.id),
+                      loadKeyValues: () =>
+                          app.items!.listKeyValuesForItem(_selected!.id),
                     ),
                   ),
                 ],
@@ -212,110 +213,6 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _MediaGrid extends StatelessWidget {
-  final List<MediaItem> items;
-  final MediaItem? selected;
-  final Set<String> untaggedIds;
-  final void Function(MediaItem) onSelect;
-
-  const _MediaGrid({
-    required this.items,
-    required this.selected,
-    required this.untaggedIds,
-    required this.onSelect,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final cs = Theme.of(context).colorScheme;
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 180,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-        childAspectRatio: 0.85,
-      ),
-      itemCount: items.length,
-      itemBuilder: (ctx, i) {
-        final item = items[i];
-        final isSelected = selected?.id == item.id;
-        final isUntagged = untaggedIds.contains(item.id);
-        final thumbFile = app.isReady
-            ? File('${app.paths!.thumbsDir.path}/${item.id}.jpg')
-            : null;
-        final hasThumb = thumbFile?.existsSync() ?? false;
-
-        return GestureDetector(
-          onTap: () => onSelect(item),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: isSelected ? cs.primary : cs.outline.withOpacity(0.2),
-                width: isSelected ? 2 : 1,
-              ),
-              color: isSelected ? cs.primary.withOpacity(0.08) : cs.surface,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-                    child: hasThumb
-                        ? Image.file(thumbFile!, fit: BoxFit.cover)
-                        : Container(
-                            color: cs.surfaceVariant,
-                            child: Icon(
-                              item.type == ItemType.video
-                                  ? Icons.videocam_outlined
-                                  : Icons.image_outlined,
-                              size: 36,
-                              color: cs.onSurfaceVariant,
-                            ),
-                          ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item.originalName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ),
-                      if (isUntagged && app.settings.showUntaggedIndicator)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: Container(
-                            width: 6,
-                            height: 6,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: cs.error,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }

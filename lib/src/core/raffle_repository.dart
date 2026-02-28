@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:uuid/uuid.dart';
 
@@ -172,6 +173,198 @@ class RaffleRepository {
       }
     });
     await _touchPlaylist(playlistId);
+  }
+
+  // --- Auto-generate & sync ---
+
+  /// Returns all categories with subcategory item counts for the generate dialog.
+  Future<List<Map<String, dynamic>>> listCategoriesWithCounts() async {
+    final cats = await db.query('categories', orderBy: 'sort_order ASC, name COLLATE NOCASE');
+    final result = <Map<String, dynamic>>[];
+    for (final cat in cats) {
+      final catId = cat['id'] as String;
+      final subs = await db.query('subcategories',
+          where: 'category_id=?',
+          whereArgs: [catId],
+          orderBy: 'sort_order ASC, name COLLATE NOCASE');
+      final subList = <Map<String, dynamic>>[];
+      for (final sub in subs) {
+        final subId = sub['id'] as String;
+        final countRows = await db.rawQuery(
+            'SELECT COUNT(*) as c FROM items WHERE subcategory_id=?', [subId]);
+        final count = (countRows.first['c'] as int?) ?? 0;
+        subList.add({
+          'subcategoryId': subId,
+          'subcategoryName': sub['name'] as String,
+          'itemCount': count,
+        });
+      }
+      result.add({
+        'categoryId': catId,
+        'categoryName': cat['name'] as String,
+        'subcategories': subList,
+      });
+    }
+    return result;
+  }
+
+  /// Creates a playlist with one segment per qualifying subcategory.
+  Future<RafflePlaylist> generateFromSubcategories({
+    required String playlistName,
+    required List<String> categoryIds,
+    int minItemCount = 2,
+  }) async {
+    final playlist = await createPlaylist(playlistName);
+    int sortOrder = 0;
+    for (final catId in categoryIds) {
+      final subs = await db.query('subcategories',
+          where: 'category_id=?',
+          whereArgs: [catId],
+          orderBy: 'sort_order ASC, name COLLATE NOCASE');
+      for (final sub in subs) {
+        final subId = sub['id'] as String;
+        final subName = sub['name'] as String;
+        final countRows = await db.rawQuery(
+            'SELECT COUNT(*) as c FROM items WHERE subcategory_id=?', [subId]);
+        final count = (countRows.first['c'] as int?) ?? 0;
+        if (count < minItemCount) continue;
+        final segId = _uuid.v4();
+        await db.transaction((txn) async {
+          await txn.insert('raffle_playlist_segments', {
+            'id': segId,
+            'playlist_id': playlist.id,
+            'label': subName,
+            'sort_order': sortOrder,
+          });
+          await txn.insert('raffle_segment_categories', {
+            'segment_id': segId,
+            'category_id': catId,
+            'subcategory_id': subId,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        });
+        sortOrder++;
+      }
+    }
+    await _touchPlaylist(playlist.id);
+    return playlist;
+  }
+
+  /// Creates a playlist with mixed segments — each segment randomly combines
+  /// [categoriesPerSegment] subcategories from the qualifying pool.
+  Future<RafflePlaylist> generateMixed({
+    required String playlistName,
+    required List<String> categoryIds,
+    required int segmentCount,
+    required int categoriesPerSegment,
+    int minItemCount = 2,
+  }) async {
+    final playlist = await createPlaylist(playlistName);
+    final rng = Random();
+
+    // Build pool of qualifying subcategories
+    final pool = <Map<String, String>>[];  // {subId, subName, catId}
+    for (final catId in categoryIds) {
+      final subs = await db.query('subcategories',
+          where: 'category_id=?',
+          whereArgs: [catId],
+          orderBy: 'sort_order ASC, name COLLATE NOCASE');
+      for (final sub in subs) {
+        final subId = sub['id'] as String;
+        final countRows = await db.rawQuery(
+            'SELECT COUNT(*) as c FROM items WHERE subcategory_id=?', [subId]);
+        final count = (countRows.first['c'] as int?) ?? 0;
+        if (count < minItemCount) continue;
+        pool.add({
+          'subId': subId,
+          'subName': sub['name'] as String,
+          'catId': catId,
+        });
+      }
+    }
+
+    if (pool.isEmpty) {
+      await _touchPlaylist(playlist.id);
+      return playlist;
+    }
+
+    // Clamp categoriesPerSegment to pool size
+    final perSeg = categoriesPerSegment.clamp(1, pool.length);
+
+    for (int i = 0; i < segmentCount; i++) {
+      // Shuffle pool and pick perSeg unique entries
+      final shuffled = List<Map<String, String>>.from(pool)..shuffle(rng);
+      final picked = shuffled.take(perSeg).toList();
+
+      final label = picked.map((e) => e['subName']!).join(' · ');
+      final segId = _uuid.v4();
+
+      await db.transaction((txn) async {
+        await txn.insert('raffle_playlist_segments', {
+          'id': segId,
+          'playlist_id': playlist.id,
+          'label': label,
+          'sort_order': i,
+        });
+        for (final entry in picked) {
+          await txn.insert('raffle_segment_categories', {
+            'segment_id': segId,
+            'category_id': entry['catId']!,
+            'subcategory_id': entry['subId']!,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      });
+    }
+
+    await _touchPlaylist(playlist.id);
+    return playlist;
+  }
+
+  /// Adds segments for subcategories not already covered. Never removes.
+  /// Returns count of segments added.
+  Future<int> syncWithLibrary({
+    required String playlistId,
+    int minItemCount = 2,
+  }) async {
+    final existingSegments = await listSegments(playlistId);
+    final coveredSubIds = <String>{};
+    for (final seg in existingSegments) {
+      for (final cat in seg.categories) {
+        if (cat.subcategoryId != null) coveredSubIds.add(cat.subcategoryId!);
+      }
+    }
+    final allSubs = await db.query('subcategories',
+        orderBy: 'sort_order ASC, name COLLATE NOCASE');
+    final maxRows = await db.rawQuery(
+        'SELECT MAX(sort_order) as m FROM raffle_playlist_segments WHERE playlist_id=?',
+        [playlistId]);
+    int sortOrder = (maxRows.first['m'] as int?) ?? -1;
+    int added = 0;
+    for (final sub in allSubs) {
+      final subId = sub['id'] as String;
+      if (coveredSubIds.contains(subId)) continue;
+      final countRows = await db.rawQuery(
+          'SELECT COUNT(*) as c FROM items WHERE subcategory_id=?', [subId]);
+      final count = (countRows.first['c'] as int?) ?? 0;
+      if (count < minItemCount) continue;
+      sortOrder++;
+      final segId = _uuid.v4();
+      await db.transaction((txn) async {
+        await txn.insert('raffle_playlist_segments', {
+          'id': segId,
+          'playlist_id': playlistId,
+          'label': sub['name'] as String,
+          'sort_order': sortOrder,
+        });
+        await txn.insert('raffle_segment_categories', {
+          'segment_id': segId,
+          'category_id': sub['category_id'] as String,
+          'subcategory_id': subId,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      });
+      added++;
+    }
+    if (added > 0) await _touchPlaylist(playlistId);
+    return added;
   }
 
   // ─── Query items for a segment ─────────────────────────────────────────────

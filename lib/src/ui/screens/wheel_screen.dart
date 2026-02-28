@@ -211,6 +211,21 @@ class _WheelScreenState extends State<WheelScreen>
     return parts.isEmpty ? 'No filters configured' : parts.join(' · ');
   }
 
+  Future<void> _syncWithLibrary() async {
+    final app = context.read<AppState>();
+    setState(() => _loading = true);
+    final added = await app.raffle!.syncWithLibrary(playlistId: widget.playlist.id);
+    await _loadSegments();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(added == 0
+            ? 'Already up to date — no new segments added.'
+            : 'Added $added new segment${added == 1 ? '' : 's'} from library.'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -220,6 +235,11 @@ class _WheelScreenState extends State<WheelScreen>
       appBar: AppBar(
         title: Text(widget.playlist.name),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.sync),
+            tooltip: 'Sync with Library',
+            onPressed: _syncWithLibrary,
+          ),
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: 'Add segment',

@@ -22,7 +22,7 @@ class MediaItem {
   final String subcategoryId;
   final ItemType type;
   final String originalName;
-  final String storedRelPath; // relative to /Library/files
+  final String storedRelPath;
   final int sizeBytes;
   final String sha256;
   final DateTime createdAt;
@@ -120,7 +120,7 @@ class Note {
 class NoteAttachment {
   final String id;
   final String noteId;
-  final String storedRelPath; // relative to /Library/attachments
+  final String storedRelPath;
   final String originalName;
   final String mime;
   final int sizeBytes;
@@ -173,10 +173,34 @@ class RaffleSegment {
 
 class RaffleSegmentCategory {
   final String categoryId;
-  final String? subcategoryId; // null = whole category
+  final String? subcategoryId;
 
   RaffleSegmentCategory({
     required this.categoryId,
     this.subcategoryId,
+  });
+}
+
+// ─── Quick Roll models ─────────────────────────────────────────────────────────
+
+class QuickRollPreset {
+  final String id;
+  final String name;
+  final int sampleSize;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final List<String> simpleTagIds;
+  final List<String> keyValueIds;
+  final List<RaffleSegmentCategory> categories;
+
+  QuickRollPreset({
+    required this.id,
+    required this.name,
+    required this.sampleSize,
+    required this.createdAt,
+    required this.updatedAt,
+    this.simpleTagIds = const [],
+    this.keyValueIds = const [],
+    this.categories = const [],
   });
 }
