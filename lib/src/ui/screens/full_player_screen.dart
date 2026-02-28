@@ -163,27 +163,82 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     });
   }
 
+  void _adjustVolume(double delta) {
+    final sv = SessionVolume.instance;
+    sv.volume = (sv.volume + delta).clamp(0.0, 1.0);
+    if (sv.muted && delta > 0) sv.muted = false;
+    _playerController.player.setVolume(sv.muted ? 0 : sv.volume * 100);
+    setState(() {}); // refresh volume slider in MediaPlayerWidget via SessionVolume
+  }
+
+  void _toggleMute() {
+    final sv = SessionVolume.instance;
+    sv.muted = !sv.muted;
+    _playerController.player.setVolume(sv.muted ? 0 : sv.volume * 100);
+    setState(() {});
+  }
+
+  void _skipBack() {
+    final pos = _playerController.player.state.position;
+    final t = pos - const Duration(seconds: 10);
+    _playerController.player.seek(t < Duration.zero ? Duration.zero : t);
+  }
+
+  void _skipForward() {
+    _playerController.player.seek(
+      _playerController.player.state.position + const Duration(seconds: 10),
+    );
+  }
+
   void _handleKey(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return;
+    // Flash chrome on any keypress in fullscreen (same as mouse move)
+    if (_isFullscreen) _onMouseMove();
+    final isDown = event is KeyDownEvent;
     switch (event.logicalKey) {
-      case LogicalKeyboardKey.comma:  _navigateToItem(-1); break;
-      case LogicalKeyboardKey.period: _navigateToItem(1); break;
+      case LogicalKeyboardKey.space:
+        if (isDown && !_playerController.isStaticImage && !_playerController.isGif)
+          _playerController.player.playOrPause();
+        break;
+      case LogicalKeyboardKey.arrowLeft:
+        if (!_playerController.isStaticImage && !_playerController.isGif) _skipBack();
+        break;
+      case LogicalKeyboardKey.arrowRight:
+        if (!_playerController.isStaticImage && !_playerController.isGif) _skipForward();
+        break;
+      case LogicalKeyboardKey.arrowUp:
+        _adjustVolume(0.05);
+        break;
+      case LogicalKeyboardKey.arrowDown:
+        _adjustVolume(-0.05);
+        break;
+      case LogicalKeyboardKey.keyM:
+        if (isDown) _toggleMute();
+        break;
+      case LogicalKeyboardKey.comma:
+        if (isDown) _navigateToItem(-1);
+        break;
+      case LogicalKeyboardKey.period:
+        if (isDown) _navigateToItem(1);
+        break;
       case LogicalKeyboardKey.escape:
-        if (_isFullscreen) _toggleFullscreen();
-        else Navigator.of(context).pop();
+        if (isDown) {
+          if (_isFullscreen) _toggleFullscreen();
+          else Navigator.of(context).pop();
+        }
         break;
       case LogicalKeyboardKey.f11:
       case LogicalKeyboardKey.keyF:
-        _toggleFullscreen();
+        if (isDown) _toggleFullscreen();
         break;
       case LogicalKeyboardKey.keyL:
-        setState(() {
+        if (isDown) setState(() {
           _loopEnabled = !_loopEnabled;
           if (_loopEnabled) _autoplayNext = false;
         });
         break;
       case LogicalKeyboardKey.keyN:
-        setState(() {
+        if (isDown) setState(() {
           _autoplayNext = !_autoplayNext;
           if (_autoplayNext) _loopEnabled = false;
         });

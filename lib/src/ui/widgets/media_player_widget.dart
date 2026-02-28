@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path/path.dart' as p;
@@ -133,7 +133,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   double? _imageAspect;
 
   final List<StreamSubscription<dynamic>> _subs = [];
-  final FocusNode _focusNode = FocusNode();
 
   bool get _isImageOrGif => widget.controller.isStaticImage || widget.controller.isGif;
 
@@ -200,27 +199,26 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   @override
   void dispose() {
     for (final s in _subs) s.cancel();
-    _focusNode.dispose();
     super.dispose();
   }
 
   // ── Controls ───────────────────────────────────────────────────────────────
 
-  void _togglePlay() => widget.controller.player.playOrPause();
+  void togglePlay() => widget.controller.player.playOrPause();
 
-  void _skipBack() {
+  void skipBack() {
     final t = _position - const Duration(seconds: 10);
     widget.controller.player.seek(t < Duration.zero ? Duration.zero : t);
   }
 
-  void _skipForward() => widget.controller.player.seek(_position + const Duration(seconds: 10));
+  void skipForward() => widget.controller.player.seek(_position + const Duration(seconds: 10));
 
-  void _seekTo(double fraction) {
+  void seekTo(double fraction) {
     if (_duration == Duration.zero) return;
     widget.controller.player.seek(Duration(milliseconds: (_duration.inMilliseconds * fraction).round()));
   }
 
-  void _toggleMute() {
+  void toggleMute() {
     final sv = SessionVolume.instance;
     if (_isMuted) {
       sv.muted = false;
@@ -233,7 +231,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     }
   }
 
-  void _setVolume(double v) {
+  void setVolume(double v) {
     final sv = SessionVolume.instance;
     sv.volume = v;
     sv.muted = v == 0;
@@ -241,22 +239,8 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     widget.controller.player.setVolume(v * 100);
   }
 
-  void _adjustVolume(double delta) => _setVolume((_volume + delta).clamp(0.0, 1.0));
+  void adjustVolume(double delta) => setVolume((_volume + delta).clamp(0.0, 1.0));
 
-  void _handleKey(KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return;
-    switch (event.logicalKey) {
-      case LogicalKeyboardKey.space:       if (event is KeyDownEvent) _togglePlay(); break;
-      case LogicalKeyboardKey.arrowLeft:   if (!_isImageOrGif) _skipBack(); break;
-      case LogicalKeyboardKey.arrowRight:  if (!_isImageOrGif) _skipForward(); break;
-      case LogicalKeyboardKey.arrowUp:     _adjustVolume(0.05); break;
-      case LogicalKeyboardKey.arrowDown:   _adjustVolume(-0.05); break;
-      case LogicalKeyboardKey.keyM:        if (event is KeyDownEvent) _toggleMute(); break;
-      case LogicalKeyboardKey.keyF:        if (event is KeyDownEvent) widget.onFullscreen?.call(); break;
-      case LogicalKeyboardKey.keyL:        if (event is KeyDownEvent) widget.onLoopToggle?.call(); break;
-      case LogicalKeyboardKey.keyN:        if (event is KeyDownEvent) widget.onAutoplayToggle?.call(); break;
-    }
-  }
 
   String _fmt(Duration d) {
     if (d == Duration.zero) return '--:--';
@@ -282,10 +266,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   /// Images and GIFs: just the image, no controls overlay.
   /// Expand button shown as a small overlay top-right if onExpand is set.
   Widget _buildImageViewer() {
-    return KeyboardListener(
-      focusNode: _focusNode,
-      onKeyEvent: _handleKey,
-      child: Stack(
+    return Stack(
         children: [
           Positioned.fill(
             child: _withAspectRatio(
@@ -311,7 +292,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
               ),
             ),
         ],
-      ),
     );
   }
 
@@ -321,14 +301,11 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
         : 0.0;
 
-    return KeyboardListener(
-      focusNode: _focusNode,
-      onKeyEvent: _handleKey,
-      child: Stack(
+    return Stack(
         children: [
           Positioned.fill(
             child: GestureDetector(
-              onTap: _togglePlay,
+              onTap: togglePlay,
               behavior: HitTestBehavior.opaque,
               child: _withAspectRatio(
                 aspect: _videoAspect,
@@ -348,7 +325,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
             ),
           ),
         ],
-      ),
     );
   }
 
@@ -379,7 +355,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
                 LayoutBuilder(
                   builder: (ctx, constraints) => _SeekBar(
                     progress: progress,
-                    onSeek: _seekTo,
+                    onSeek: seekTo,
                     accentColor: cs.primary,
                     compact: widget.compact,
                     availableWidth: constraints.maxWidth,
@@ -401,16 +377,16 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
 
     return Row(
       children: [
-        _ControlButton(icon: Icons.replay_10, onTap: _skipBack, size: iconSize, tooltip: '−10s (←)'),
+        _ControlButton(icon: Icons.replay_10, onTap: skipBack, size: iconSize, tooltip: '−10s (←)'),
         SizedBox(width: widget.compact ? 2 : 6),
         _ControlButton(
           icon: _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          onTap: _togglePlay,
+          onTap: togglePlay,
           size: widget.compact ? 22 : 28,
           tooltip: 'Play/Pause (Space)',
         ),
         SizedBox(width: widget.compact ? 2 : 6),
-        _ControlButton(icon: Icons.forward_10, onTap: _skipForward, size: iconSize, tooltip: '+10s (→)'),
+        _ControlButton(icon: Icons.forward_10, onTap: skipForward, size: iconSize, tooltip: '+10s (→)'),
         SizedBox(width: widget.compact ? 4 : 10),
         Text(
           '${_fmt(_position)} / ${_fmt(_duration)}',
@@ -422,10 +398,10 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         ),
         const Spacer(),
 
-        _ControlButton(icon: volIcon, onTap: _toggleMute, size: iconSize, tooltip: 'Mute (M)'),
+        _ControlButton(icon: volIcon, onTap: toggleMute, size: iconSize, tooltip: 'Mute (M)'),
         if (!widget.compact) ...[
           const SizedBox(width: 4),
-          _VolumeSlider(value: _isMuted ? 0.0 : _volume, onChanged: _setVolume),
+          _VolumeSlider(value: _isMuted ? 0.0 : _volume, onChanged: setVolume),
         ],
         SizedBox(width: widget.compact ? 2 : 8),
 
