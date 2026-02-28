@@ -89,9 +89,7 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
 
   Future<void> _openCurrentItem() async {
     final filePath = LibraryFolders.absPath(widget.libraryFilesDir, widget.item.storedRelPath);
-    // Init session volume from settings on first open
     final app = context.read<AppState>();
-    SessionVolume.instance.initFromSettings(app.settings.startMuted);
     await _controller.open(widget.item, filePath);
     // Autostart video only if setting enabled
     if (!_controller.isStaticImage && !_controller.isGif && app.settings.videoAutostartInPanel) {

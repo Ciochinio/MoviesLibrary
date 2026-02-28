@@ -1,19 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path/path.dart' as p;
 
-
-
 import '../../core/models.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SessionVolume — app-wide singleton so all players share the same volume
+// SessionVolume — app-wide singleton so all players share volume
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SessionVolume {
@@ -80,6 +77,9 @@ class PmlPlayerController {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MediaPlayerWidget
+//
+// For images/GIFs: shows the image with no controls overlay.
+// For videos: full player controls.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MediaPlayerWidget extends StatefulWidget {
@@ -89,7 +89,7 @@ class MediaPlayerWidget extends StatefulWidget {
   final VoidCallback? onExpand;
   final bool compact;
 
-  /// When false, controls overlay fades out (used in fullscreen hide mode).
+  /// When false, controls overlay fades out (fullscreen hide mode).
   final bool controlsVisible;
 
   // FullPlayerScreen props
@@ -98,8 +98,6 @@ class MediaPlayerWidget extends StatefulWidget {
   final VoidCallback? onLoopToggle;
   final VoidCallback? onAutoplayToggle;
   final VoidCallback? onFullscreen;
-  final VoidCallback? onTimerEnd;
-  final bool autoStartTimer;
 
   const MediaPlayerWidget({
     super.key,
@@ -114,8 +112,6 @@ class MediaPlayerWidget extends StatefulWidget {
     this.onLoopToggle,
     this.onAutoplayToggle,
     this.onFullscreen,
-    this.onTimerEnd,
-    this.autoStartTimer = false,
   });
 
   @override
@@ -127,20 +123,14 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
-  double? _videoAspect; // null until we know it
+  double? _videoAspect;
 
   // ── Volume ────────────────────────────────────────────────────────────────
   double _volume = SessionVolume.instance.volume;
   bool _isMuted = SessionVolume.instance.muted;
 
-  // ── Image/GIF timer ───────────────────────────────────────────────────────
-  static const _timerDuration = Duration(seconds: 10);
-  Timer? _imgTimer;
-  Duration _imgPosition = Duration.zero;
-  bool _imgPlaying = false;
-
   // ── Image aspect ratio ────────────────────────────────────────────────────
-  double? _imageAspect; // null until loaded
+  double? _imageAspect;
 
   final List<StreamSubscription<dynamic>> _subs = [];
   final FocusNode _focusNode = FocusNode();
@@ -152,32 +142,23 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     super.initState();
     if (!_isImageOrGif) _subscribeToPlayer();
     if (_isImageOrGif) _resolveImageAspect();
-    if (_isImageOrGif && widget.autoStartTimer) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _imgStart());
-    }
   }
 
   @override
   void didUpdateWidget(covariant MediaPlayerWidget old) {
     super.didUpdateWidget(old);
     if (old.item.id != widget.item.id) {
-      _stopImgTimer();
       for (final s in _subs) s.cancel();
       _subs.clear();
       setState(() {
         _position = Duration.zero;
         _duration = Duration.zero;
         _isPlaying = false;
-        _imgPosition = Duration.zero;
-        _imgPlaying = false;
         _videoAspect = null;
         _imageAspect = null;
       });
       if (!_isImageOrGif) _subscribeToPlayer();
       if (_isImageOrGif) _resolveImageAspect();
-      if (_isImageOrGif && widget.autoStartTimer) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _imgStart());
-      }
     }
     _volume = SessionVolume.instance.volume;
     _isMuted = SessionVolume.instance.muted;
@@ -188,22 +169,20 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     _subs.add(player.stream.playing.listen((v) { if (mounted) setState(() => _isPlaying = v); }));
     _subs.add(player.stream.position.listen((v) { if (mounted) setState(() => _position = v); }));
     _subs.add(player.stream.duration.listen((v) { if (mounted) setState(() => _duration = v); }));
-    // Track video dimensions for aspect ratio
     _subs.add(player.stream.width.listen((v) {
-      if (mounted && v != null && v > 1) {  // ignore 1x1 placeholder
+      if (mounted && v != null && v > 1) {
         final h = widget.controller.player.state.height;
         if (h != null && h > 1) setState(() => _videoAspect = v / h);
       }
     }));
     _subs.add(player.stream.height.listen((v) {
-      if (mounted && v != null && v > 1) {  // ignore 1x1 placeholder
+      if (mounted && v != null && v > 1) {
         final w = widget.controller.player.state.width;
         if (w != null && w > 1) setState(() => _videoAspect = w / v);
       }
     }));
   }
 
-  /// Reads image/GIF dimensions to compute aspect ratio
   void _resolveImageAspect() {
     final file = File(widget.filePath);
     if (!file.existsSync()) return;
@@ -221,85 +200,22 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   @override
   void dispose() {
     for (final s in _subs) s.cancel();
-    _stopImgTimer();
     _focusNode.dispose();
     super.dispose();
   }
 
-  // ── Image/GIF timer ────────────────────────────────────────────────────────
+  // ── Controls ───────────────────────────────────────────────────────────────
 
-  void _imgStart() {
-    if (!mounted) return;
-    if (_imgPosition >= _timerDuration) setState(() => _imgPosition = Duration.zero);
-    setState(() => _imgPlaying = true);
-    _stopImgTimer();
-    _imgTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (!mounted) return;
-      final next = _imgPosition + const Duration(milliseconds: 100);
-      if (next >= _timerDuration) {
-        _stopImgTimer();
-        setState(() { _imgPosition = _timerDuration; _imgPlaying = false; });
-        widget.onTimerEnd?.call();
-      } else {
-        setState(() => _imgPosition = next);
-      }
-    });
-  }
-
-  void _stopImgTimer() {
-    _imgTimer?.cancel();
-    _imgTimer = null;
-  }
-
-  void _imgTogglePlay() {
-    if (_imgPlaying) { _stopImgTimer(); setState(() => _imgPlaying = false); }
-    else { _imgStart(); }
-  }
-
-  void _imgSkipBack() {
-    final t = _imgPosition - const Duration(seconds: 10);
-    setState(() => _imgPosition = t < Duration.zero ? Duration.zero : t);
-    if (_imgPlaying) { _stopImgTimer(); _imgStart(); }
-  }
-
-  void _imgSkipForward() {
-    final t = _imgPosition + const Duration(seconds: 10);
-    if (t >= _timerDuration) {
-      _stopImgTimer();
-      setState(() { _imgPosition = _timerDuration; _imgPlaying = false; });
-      widget.onTimerEnd?.call();
-    } else {
-      setState(() => _imgPosition = t);
-      if (_imgPlaying) { _stopImgTimer(); _imgStart(); }
-    }
-  }
-
-  void _imgSeekTo(double fraction) {
-    final t = Duration(milliseconds: (_timerDuration.inMilliseconds * fraction).round());
-    setState(() => _imgPosition = t);
-    if (_imgPlaying) { _stopImgTimer(); _imgStart(); }
-  }
-
-  // ── Unified controls ───────────────────────────────────────────────────────
-
-  void _togglePlay() {
-    if (_isImageOrGif) { _imgTogglePlay(); return; }
-    widget.controller.player.playOrPause();
-  }
+  void _togglePlay() => widget.controller.player.playOrPause();
 
   void _skipBack() {
-    if (_isImageOrGif) { _imgSkipBack(); return; }
     final t = _position - const Duration(seconds: 10);
     widget.controller.player.seek(t < Duration.zero ? Duration.zero : t);
   }
 
-  void _skipForward() {
-    if (_isImageOrGif) { _imgSkipForward(); return; }
-    widget.controller.player.seek(_position + const Duration(seconds: 10));
-  }
+  void _skipForward() => widget.controller.player.seek(_position + const Duration(seconds: 10));
 
   void _seekTo(double fraction) {
-    if (_isImageOrGif) { _imgSeekTo(fraction); return; }
     if (_duration == Duration.zero) return;
     widget.controller.player.seek(Duration(milliseconds: (_duration.inMilliseconds * fraction).round()));
   }
@@ -325,41 +241,20 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     widget.controller.player.setVolume(v * 100);
   }
 
-  void _adjustVolume(double delta) {
-    final newVol = (_volume + delta).clamp(0.0, 1.0);
-    _setVolume(newVol);
-  }
+  void _adjustVolume(double delta) => _setVolume((_volume + delta).clamp(0.0, 1.0));
 
   void _handleKey(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return;
     switch (event.logicalKey) {
-      case LogicalKeyboardKey.space:
-        if (event is KeyDownEvent) _togglePlay();
-        break;
-      case LogicalKeyboardKey.arrowLeft:
-        _skipBack();
-        break;
-      case LogicalKeyboardKey.arrowRight:
-        _skipForward();
-        break;
-      case LogicalKeyboardKey.arrowUp:
-        _adjustVolume(0.05);
-        break;
-      case LogicalKeyboardKey.arrowDown:
-        _adjustVolume(-0.05);
-        break;
-      case LogicalKeyboardKey.keyM:
-        if (event is KeyDownEvent) _toggleMute();
-        break;
-      case LogicalKeyboardKey.keyF:
-        if (event is KeyDownEvent) widget.onFullscreen?.call();
-        break;
-      case LogicalKeyboardKey.keyL:
-        if (event is KeyDownEvent) widget.onLoopToggle?.call();
-        break;
-      case LogicalKeyboardKey.keyN:
-        if (event is KeyDownEvent) widget.onAutoplayToggle?.call();
-        break;
+      case LogicalKeyboardKey.space:       if (event is KeyDownEvent) _togglePlay(); break;
+      case LogicalKeyboardKey.arrowLeft:   if (!_isImageOrGif) _skipBack(); break;
+      case LogicalKeyboardKey.arrowRight:  if (!_isImageOrGif) _skipForward(); break;
+      case LogicalKeyboardKey.arrowUp:     _adjustVolume(0.05); break;
+      case LogicalKeyboardKey.arrowDown:   _adjustVolume(-0.05); break;
+      case LogicalKeyboardKey.keyM:        if (event is KeyDownEvent) _toggleMute(); break;
+      case LogicalKeyboardKey.keyF:        if (event is KeyDownEvent) widget.onFullscreen?.call(); break;
+      case LogicalKeyboardKey.keyL:        if (event is KeyDownEvent) widget.onLoopToggle?.call(); break;
+      case LogicalKeyboardKey.keyN:        if (event is KeyDownEvent) widget.onAutoplayToggle?.call(); break;
     }
   }
 
@@ -375,59 +270,46 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isImageOrGif) return _buildImageGifPlayer();
+    if (_isImageOrGif) return _buildImageViewer();
     return _buildVideoPlayer();
   }
 
-  /// Wraps content in an AspectRatio if we know the dimensions,
-  /// otherwise fills available space. This eliminates black bars.
   Widget _withAspectRatio({required double? aspect, required Widget child}) {
-    if (aspect == null) {
-      return SizedBox.expand(child: child);
-    }
-    return Center(
-      child: AspectRatio(
-        aspectRatio: aspect,
-        child: child,
-      ),
-    );
+    if (aspect == null) return SizedBox.expand(child: child);
+    return Center(child: AspectRatio(aspectRatio: aspect, child: child));
   }
 
-  Widget _buildImageGifPlayer() {
-    final cs = Theme.of(context).colorScheme;
-    final progress = _imgPosition.inMilliseconds / _timerDuration.inMilliseconds;
-
+  /// Images and GIFs: just the image, no controls overlay.
+  /// Expand button shown as a small overlay top-right if onExpand is set.
+  Widget _buildImageViewer() {
     return KeyboardListener(
       focusNode: _focusNode,
       onKeyEvent: _handleKey,
       child: Stack(
         children: [
-          // Image/GIF with correct aspect ratio
           Positioned.fill(
-            child: GestureDetector(
-              onTap: _togglePlay,
-              behavior: HitTestBehavior.opaque,
-              child: _withAspectRatio(
-                aspect: _imageAspect,
-                child: Image.file(
-                  File(widget.filePath),
-                  fit: BoxFit.contain,
-                  width: double.infinity,
-                  height: double.infinity,
-                  errorBuilder: (_, __, ___) =>
-                      const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white38)),
-                ),
+            child: _withAspectRatio(
+              aspect: _imageAspect,
+              child: Image.file(
+                File(widget.filePath),
+                fit: BoxFit.contain,
+                width: double.infinity,
+                height: double.infinity,
+                errorBuilder: (_, __, ___) =>
+                    const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white38)),
               ),
             ),
           ),
-          // Controls — fade out when hidden
-          Positioned.fill(
-            child: AnimatedOpacity(
-              opacity: widget.controlsVisible ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 300),
-              child: _buildControlsOverlay(cs, progress.clamp(0.0, 1.0), _imgPlaying, showVolume: false),
+          if (widget.onExpand != null)
+            Positioned(
+              bottom: 8, right: 8,
+              child: _ControlButton(
+                icon: Icons.open_in_full,
+                onTap: widget.onExpand!,
+                size: 18,
+                tooltip: 'Open in player view',
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -444,7 +326,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
       onKeyEvent: _handleKey,
       child: Stack(
         children: [
-          // Video with correct aspect ratio
           Positioned.fill(
             child: GestureDetector(
               onTap: _togglePlay,
@@ -459,12 +340,11 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
               ),
             ),
           ),
-          // Controls — fade out when hidden
           Positioned.fill(
             child: AnimatedOpacity(
               opacity: widget.controlsVisible ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 300),
-              child: _buildControlsOverlay(cs, progress, _isPlaying, showVolume: true),
+              child: _buildControlsOverlay(cs, progress),
             ),
           ),
         ],
@@ -472,9 +352,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     );
   }
 
-  // ── Controls overlay ───────────────────────────────────────────────────────
-
-  Widget _buildControlsOverlay(ColorScheme cs, double progress, bool isPlaying, {required bool showVolume}) {
+  Widget _buildControlsOverlay(ColorScheme cs, double progress) {
     return Column(
       children: [
         const Spacer(),
@@ -508,7 +386,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
                   ),
                 ),
                 SizedBox(height: widget.compact ? 4 : 8),
-                _buildControlRow(cs, isPlaying, showVolume: showVolume),
+                _buildControlRow(cs),
               ],
             ),
           ),
@@ -517,10 +395,8 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     );
   }
 
-  Widget _buildControlRow(ColorScheme cs, bool isPlaying, {required bool showVolume}) {
+  Widget _buildControlRow(ColorScheme cs) {
     final iconSize = widget.compact ? 18.0 : 22.0;
-    final pos = _isImageOrGif ? _imgPosition : _position;
-    final dur = _isImageOrGif ? _timerDuration : _duration;
     final volIcon = (_isMuted || _volume == 0) ? Icons.volume_off : Icons.volume_up;
 
     return Row(
@@ -528,7 +404,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         _ControlButton(icon: Icons.replay_10, onTap: _skipBack, size: iconSize, tooltip: '−10s (←)'),
         SizedBox(width: widget.compact ? 2 : 6),
         _ControlButton(
-          icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          icon: _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
           onTap: _togglePlay,
           size: widget.compact ? 22 : 28,
           tooltip: 'Play/Pause (Space)',
@@ -537,7 +413,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         _ControlButton(icon: Icons.forward_10, onTap: _skipForward, size: iconSize, tooltip: '+10s (→)'),
         SizedBox(width: widget.compact ? 4 : 10),
         Text(
-          '${_fmt(pos)} / ${_fmt(dur)}',
+          '${_fmt(_position)} / ${_fmt(_duration)}',
           style: TextStyle(
             color: Colors.white70,
             fontSize: widget.compact ? 10 : 12,
@@ -546,14 +422,12 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         ),
         const Spacer(),
 
-        if (showVolume) ...[
-          _ControlButton(icon: volIcon, onTap: _toggleMute, size: iconSize, tooltip: 'Mute (M)'),
-          if (!widget.compact) ...[
-            const SizedBox(width: 4),
-            _VolumeSlider(value: _isMuted ? 0.0 : _volume, onChanged: _setVolume),
-          ],
-          SizedBox(width: widget.compact ? 2 : 8),
+        _ControlButton(icon: volIcon, onTap: _toggleMute, size: iconSize, tooltip: 'Mute (M)'),
+        if (!widget.compact) ...[
+          const SizedBox(width: 4),
+          _VolumeSlider(value: _isMuted ? 0.0 : _volume, onChanged: _setVolume),
         ],
+        SizedBox(width: widget.compact ? 2 : 8),
 
         if (widget.onLoopToggle != null)
           _ControlButton(
@@ -645,10 +519,7 @@ class _SeekBarState extends State<_SeekBar> {
       onHorizontalDragStart: (d) => setState(() => _dragValue = _fractionFromGlobal(d.globalPosition)),
       onHorizontalDragUpdate: (d) => setState(() => _dragValue = _fractionFromGlobal(d.globalPosition)),
       onHorizontalDragEnd: (_) {
-        if (_dragValue != null) {
-          widget.onSeek(_dragValue!);
-          setState(() => _dragValue = null);
-        }
+        if (_dragValue != null) { widget.onSeek(_dragValue!); setState(() => _dragValue = null); }
       },
       onTapDown: (d) => widget.onSeek(_fractionFromGlobal(d.globalPosition)),
       child: SizedBox(
@@ -659,8 +530,7 @@ class _SeekBarState extends State<_SeekBar> {
           children: [
             Positioned(left: 0, right: 0, top: (20 - trackH) / 2, height: trackH,
               child: Container(decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(trackH)))),
-            Positioned(left: 0, top: (20 - trackH) / 2, height: trackH,
-              width: value * widget.availableWidth,
+            Positioned(left: 0, top: (20 - trackH) / 2, height: trackH, width: value * widget.availableWidth,
               child: Container(decoration: BoxDecoration(color: widget.accentColor, borderRadius: BorderRadius.circular(trackH)))),
             Positioned(left: thumbLeft, top: (20 - thumbD) / 2,
               child: Container(

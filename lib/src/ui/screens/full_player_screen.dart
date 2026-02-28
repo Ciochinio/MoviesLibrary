@@ -119,11 +119,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     _openItem(widget.allItems[newIndex]);
   }
 
-  /// Called by MediaPlayerWidget when image/GIF 10s timer ends
-  void _onMediaTimerEnd() {
-    if (!_autoplayNext) return;
-    _navigateToItem(1);
-  }
 
   void _toggleDetails() => setState(() => _detailsVisible = !_detailsVisible);
 
@@ -312,8 +307,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               if (_autoplayNext) _loopEnabled = false;
             }),
             onFullscreen: _toggleFullscreen,
-            onTimerEnd: _onMediaTimerEnd,
-            autoStartTimer: _autoplayNext,
           ),
         ),
 

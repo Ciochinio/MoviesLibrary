@@ -217,50 +217,35 @@ class _TagFilterPanelState extends State<TagFilterPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'Selected: ${widget.selectedSimpleTags.length} tags, ${widget.selectedKeyValues.length} custom',
-                  style: Theme.of(context).textTheme.bodySmall,
-                  textAlign: TextAlign.center,
-                ),
-                // Min-match stepper — only show when 2+ tags selected
                 Builder(builder: (ctx) {
                   final total = widget.selectedSimpleTags.length + widget.selectedKeyValues.length;
-                  if (total < 2) return const SizedBox(height: 8);
-                  // Clamp _minMatch to valid range
                   final effective = _minMatch == 0 ? total : _minMatch.clamp(1, total);
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('Min match:', style: Theme.of(ctx).textTheme.bodySmall),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.remove, size: 16),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                          onPressed: effective > 1
-                              ? () => setState(() => _minMatch = effective - 1)
-                              : null,
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Selected: ${widget.selectedSimpleTags.length} tags, ${widget.selectedKeyValues.length} custom',
+                          style: Theme.of(ctx).textTheme.bodySmall,
                         ),
-                        SizedBox(
-                          width: 36,
-                          child: Text(
-                            '$effective / $total',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                        ),
+                      ),
+                      if (total >= 2) ...[
+                        Text('Min:', style: Theme.of(ctx).textTheme.bodySmall),
+                        const SizedBox(width: 2),
                         IconButton(
-                          icon: const Icon(Icons.add, size: 16),
+                          icon: const Icon(Icons.remove, size: 14),
                           padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                          onPressed: effective < total
-                              ? () => setState(() => _minMatch = effective + 1)
-                              : null,
+                          constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                          onPressed: effective > 1 ? () => setState(() => _minMatch = effective - 1) : null,
+                        ),
+                        Text('$effective/$total', style: Theme.of(ctx).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold)),
+                        IconButton(
+                          icon: const Icon(Icons.add, size: 14),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                          onPressed: effective < total ? () => setState(() => _minMatch = effective + 1) : null,
                         ),
                       ],
-                    ),
+                    ],
                   );
                 }),
                 const SizedBox(height: 8),
