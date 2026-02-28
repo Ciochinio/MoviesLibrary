@@ -943,13 +943,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
         children: [
           const Icon(Icons.tag, size: 20),
           const SizedBox(width: 8),
-          Text(
-            '${names.categoryName}  >  ',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).hintColor),
+          Flexible(
+            child: Text(
+              '${names.categoryName}  >  ',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).hintColor),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          Text(
-            names.subcategoryName,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          Flexible(
+            child: Text(
+              names.subcategoryName,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           const Spacer(),
           if (names.subcategoryDescription.isNotEmpty)
@@ -1120,26 +1126,31 @@ class _BottomBar extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           // ─── Left group: import / select / actions / export ───
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: onToggleSelectMode,
-                icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
-                label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
-                style: selectMode
-                    ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
-                    : null,
+          Flexible(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: onToggleSelectMode,
+                    icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
+                    label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
+                    style: selectMode
+                        ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
+                        : null,
+                  ),
+                  if (selectMode && app.selectedItemIds.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
+                  ],
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
+                ],
               ),
-              if (selectMode && app.selectedItemIds.isNotEmpty) ...[
-                const SizedBox(width: 8),
-                OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
-              ],
-              const SizedBox(width: 8),
-              OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
-            ],
+            ),
           ),
           // ─── Right group: sort / filter ───
           Row(

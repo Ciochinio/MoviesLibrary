@@ -23,7 +23,8 @@ dependencies:
   # ── In-app media player ────────────────────────────────────────────────────
   media_kit: ^1.1.11                      # core player API
   media_kit_video: ^1.2.5                 # video renderer widget
-  media_kit_libs_windows_video: ^1.0.9    # Windows native libs (FFmpeg bundled)
+  media_kit_libs_windows_video: ^1.0.9
+  media_kit_libs_macos_video: ^1.0.9     # Windows native libs (FFmpeg bundled)
   window_manager: ^0.3.9                  # True OS fullscreen
 
 dev_dependencies:

@@ -6,12 +6,18 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'package:google_fonts/google_fonts.dart';
+
 import 'src/app.dart';
 import 'src/core/app_state.dart';
 import 'src/ui/widgets/media_player_widget.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Disable network font fetching — fonts fall back to system sans-serif
+  // instead of crashing on platforms with restricted network (macOS sandbox)
+  GoogleFonts.config.allowRuntimeFetching = false;
 
   // Desktop SQLite
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
