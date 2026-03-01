@@ -70,7 +70,12 @@ class PmlPlayerController {
     _applySessionVolume();
   }
 
+  /// Notifies listeners when the aspect ratio (width/height) is resolved.
+  /// null means not yet known.
+  final ValueNotifier<double?> aspectRatio = ValueNotifier(null);
+
   Future<void> dispose() async {
+    aspectRatio.dispose();
     await _player.dispose();
   }
 }
@@ -156,6 +161,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         _videoAspect = null;
         _imageAspect = null;
       });
+      widget.controller.aspectRatio.value = null;
       if (!_isImageOrGif) _subscribeToPlayer();
       if (_isImageOrGif) _resolveImageAspect();
     }
@@ -171,7 +177,10 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     _subs.add(player.stream.width.listen((v) {
       if (mounted && v != null && v > 1) {
         final h = widget.controller.player.state.height;
-        if (h != null && h > 1) setState(() => _videoAspect = v / h);
+        if (h != null && h > 1) {
+          setState(() => _videoAspect = v / h);
+          widget.controller.aspectRatio.value = v / h;
+        }
       }
     }));
     _subs.add(player.stream.height.listen((v) {
@@ -191,7 +200,10 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         if (!mounted) return;
         final w = info.image.width.toDouble();
         final h = info.image.height.toDouble();
-        if (w > 0 && h > 0) setState(() => _imageAspect = w / h);
+        if (w > 0 && h > 0) {
+          setState(() => _imageAspect = w / h);
+          widget.controller.aspectRatio.value = w / h;
+        }
       }),
     );
   }
@@ -266,32 +278,16 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   /// Images and GIFs: just the image, no controls overlay.
   /// Expand button shown as a small overlay top-right if onExpand is set.
   Widget _buildImageViewer() {
-    return Stack(
-        children: [
-          Positioned.fill(
-            child: _withAspectRatio(
-              aspect: _imageAspect,
-              child: Image.file(
-                File(widget.filePath),
-                fit: BoxFit.contain,
-                width: double.infinity,
-                height: double.infinity,
-                errorBuilder: (_, __, ___) =>
-                    const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white38)),
-              ),
-            ),
-          ),
-          if (widget.onExpand != null)
-            Positioned(
-              bottom: 8, right: 8,
-              child: _ControlButton(
-                icon: Icons.open_in_full,
-                onTap: widget.onExpand!,
-                size: 18,
-                tooltip: 'Open in player view',
-              ),
-            ),
-        ],
+    return _withAspectRatio(
+      aspect: _imageAspect,
+      child: Image.file(
+        File(widget.filePath),
+        fit: BoxFit.contain,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) =>
+            const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white38)),
+      ),
     );
   }
 

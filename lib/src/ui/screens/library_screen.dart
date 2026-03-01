@@ -60,6 +60,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   // ── Item selection ─────────────────────────────────────────────────────────
+  bool _theatreModeActive = false;
+
   void _selectItemForPlayback(MediaItem item) {
     setState(() => selectedItem = item);
   }
@@ -899,24 +901,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
         AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,
-          width: _panelWidth,
+          width: (() {
+            final maxW = (MediaQuery.of(context).size.width - 240 - 350).clamp(200.0, double.infinity);
+            return _panelWidth.clamp(0.0, maxW);
+          })(),
           child: selectedItem == null
               ? const Center(child: Text('Select an item'))
               : SharedPlayerPanel(
                   key: ValueKey(selectedItem!.id),
+                  initialTheatreMode: _theatreModeActive,
                   item: selectedItem!,
                   libraryFilesDir: app.paths!.filesDir,
                   thumbsDir: app.paths!.thumbsDir,
                   allItems: _applyFiltersAndSort(loaded),
-                  onTheatreChanged: (w) => setState(() => _panelWidth = w),
+                  onTheatreChanged: (w) => setState(() {
+                      _panelWidth = w;
+                      _theatreModeActive = w > kPanelNormal;
+                    }),
                   onOpen: () async {
                     final filePath = LibraryFolders.absPath(app.paths!.filesDir, selectedItem!.storedRelPath);
                     await OpenFilex.open(filePath);
                   },
-                  onExport: () => _exportItem(selectedItem!),
-                  onMove: () => _moveItem(selectedItem!),
-                  onTags: () => _showTagsForItem(selectedItem!),
-                  onDelete: () => _deleteItem(selectedItem!),
                   loadTags: () => app.items!.listTagsForItem(selectedItem!.id),
                   loadKeyValues: () => app.items!.listKeyValuesForItem(selectedItem!.id),
                 ),
@@ -945,16 +950,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
           const SizedBox(width: 8),
           Flexible(
             child: Text(
-              '${names.categoryName}  >  ',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).hintColor),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Flexible(
-            child: Text(
-              names.subcategoryName,
+              '${names.categoryName}  >  ${names.subcategoryName}',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
           ),
           const Spacer(),
@@ -1123,54 +1122,50 @@ class _BottomBar extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // ─── Left group: import / select / actions / export ───
-          Flexible(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // ─── Left group: import / select / actions / export ───
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: onToggleSelectMode,
+                  icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
+                  label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
+                  style: selectMode
+                      ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
+                      : null,
+                ),
+                if (selectMode && app.selectedItemIds.isNotEmpty) ...[
                   const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: onToggleSelectMode,
-                    icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
-                    label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
-                    style: selectMode
-                        ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
-                        : null,
-                  ),
-                  if (selectMode && app.selectedItemIds.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
-                  ],
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
+                  OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
                 ],
-              ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
+              ],
             ),
-          ),
-          // ─── Right group: sort / filter ───
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SortButton(
-                label: sortLabel,
-                sortField: sortField,
-                sortAscending: sortAscending,
-                onChanged: onSortChanged,
-              ),
-              const SizedBox(width: 8),
-              TypeFilterButton(
-                label: filterLabel,
-                selected: typeFilters,
-                onChanged: onTypeFilterChanged,
-              ),
-            ],
-          ),
-        ],
+            const SizedBox(width: 16),
+            // ─── Right group: sort / filter ───
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SortButton(
+                  label: sortLabel,
+                  sortField: sortField,
+                  sortAscending: sortAscending,
+                  onChanged: onSortChanged,
+                ),
+                const SizedBox(width: 8),
+                TypeFilterButton(
+                  label: filterLabel,
+                  selected: typeFilters,
+                  onChanged: onTypeFilterChanged,
+                ),
+              ],
+            ),
+          ],
       ),
     );
   }

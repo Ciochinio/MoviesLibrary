@@ -159,31 +159,6 @@ class _RaffleResultScreenState extends State<RaffleResultScreen> {
                             app.paths!.filesDir, _selected!.storedRelPath);
                         await OpenFilex.open(abs);
                       },
-                      onExport: () => _exportItem(_selected!),
-                      onTags: () => _showTags(_selected!),
-                      onDelete: () async {
-                        final confirm = app.settings.confirmDelete
-                            ? await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Delete item?'),
-                                  actions: [
-                                    TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, false),
-                                        child: const Text('Cancel')),
-                                    FilledButton(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, true),
-                                        child: const Text('Delete')),
-                                  ],
-                                ),
-                              )
-                            : true;
-                        if (confirm != true || !mounted) return;
-                        await app.deleteOneItem(_selected!);
-                        setState(() => _selected = null);
-                      },
                       loadTags: () =>
                           app.items!.listTagsForItem(_selected!.id),
                       loadKeyValues: () =>

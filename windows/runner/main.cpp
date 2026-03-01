@@ -26,11 +26,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
+  Win32Window::Size size(1366, 768);
   if (!window.Create(L"movieslibrary", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+
+  // Force minimum size in case saved window state restored a smaller size
+  HWND hwnd = window.GetHandle();
+  if (hwnd) {
+    SetWindowPos(hwnd, nullptr, 10, 10, 1366, 768,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+  }
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {

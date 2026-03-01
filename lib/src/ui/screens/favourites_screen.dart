@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
@@ -9,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../core/library_folders.dart';
-import '../widgets/tag_manager_dialog.dart';
 import '../widgets/shared_player_panel.dart';
 
 class FavouritesScreen extends StatefulWidget {
@@ -23,6 +21,7 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
   List<MediaItem> _items = [];
   MediaItem? _selected;
   double _panelWidth = 300.0;
+  bool _theatreModeActive = false;
   bool _loading = false;
   final ScrollController _scrollController = ScrollController();
 
@@ -55,27 +54,6 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
     await _reload();
   }
 
-  Future<void> _showTagsForItem(MediaItem item) async {
-    final app = context.read<AppState>();
-    final curSimple = await app.items!.listTagIdsForItem(item.id);
-    final curKv = await app.items!.listKeyValueIdsForItem(item.id);
-    final picked = await showTagManagerDialog(context, initialSimpleTagIds: curSimple, initialKeyValueIds: curKv);
-    if (picked == null) return;
-    await app.setTagsForItem(itemId: item.id, simpleTagIds: picked.simpleTagIds, keyValueIds: picked.keyValueIds);
-    await _reload();
-  }
-
-  Future<void> _exportItem(MediaItem item) async {
-    final app = context.read<AppState>();
-    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
-    if (dir == null) return;
-    final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
-    if (!await src.exists()) return;
-    final dest = _uniquePath(p.join(dir, item.originalName));
-    await src.copy(dest);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Exported.')));
-  }
 
   String _uniquePath(String basePath) {
     if (!File(basePath).existsSync()) return basePath;
@@ -149,20 +127,18 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
                   width: _panelWidth,
                   child: SharedPlayerPanel(
                     key: ValueKey(_selected!.id),
+                  initialTheatreMode: _theatreModeActive,
                     item: _selected!,
                     libraryFilesDir: app.paths!.filesDir,
                     thumbsDir: app.paths!.thumbsDir,
                     allItems: _items,
-                    onTheatreChanged: (w) => setState(() => _panelWidth = w),
+                    onTheatreChanged: (w) => setState(() {
+                      _panelWidth = w;
+                      _theatreModeActive = w > kPanelNormal;
+                    }),
                     onOpen: () async {
                       final abs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
                       await OpenFilex.open(abs);
-                    },
-                    onExport: () => _exportItem(_selected!),
-                    onTags: () => _showTagsForItem(_selected!),
-                    onDelete: () async {
-                      await _toggleFavourite(_selected!.id, false);
-                      setState(() => _selected = null);
                     },
                     loadTags: () => app.items!.listTagsForItem(_selected!.id),
                     loadKeyValues: () => app.items!.listKeyValuesForItem(_selected!.id),

@@ -33,13 +33,11 @@ class SharedPlayerPanel extends StatefulWidget {
   final void Function(double width)? onTheatreChanged;
 
   final VoidCallback onOpen;
-  final VoidCallback onExport;
-  final VoidCallback? onMove;
-  final VoidCallback onTags;
-  final VoidCallback onDelete;
   final Future<List<Tag>> Function() loadTags;
   final Future<List<TagKeyValue>> Function() loadKeyValues;
   final List<Widget> extraActions;
+
+  final bool initialTheatreMode;
 
   const SharedPlayerPanel({
     super.key,
@@ -48,11 +46,8 @@ class SharedPlayerPanel extends StatefulWidget {
     required this.thumbsDir,
     required this.allItems,
     this.onTheatreChanged,
+    this.initialTheatreMode = false,
     required this.onOpen,
-    required this.onExport,
-    this.onMove,
-    required this.onTags,
-    required this.onDelete,
     required this.loadTags,
     required this.loadKeyValues,
     this.extraActions = const [],
@@ -64,11 +59,12 @@ class SharedPlayerPanel extends StatefulWidget {
 
 class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
   late PmlPlayerController _controller;
-  bool _theatreMode = false;
+  late bool _theatreMode;
 
   @override
   void initState() {
     super.initState();
+    _theatreMode = widget.initialTheatreMode;
     _controller = PmlPlayerController();
     _openCurrentItem();
   }
@@ -120,12 +116,29 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
   @override
   Widget build(BuildContext context) {
     final filePath = LibraryFolders.absPath(widget.libraryFilesDir, widget.item.storedRelPath);
-    // Player height stays at 16:9 of the panel's normal width
-    // In theatre mode the panel is wider so we scale height accordingly
-    final playerH = _theatreMode ? (kPanelTheatre * 9 / 16) : (kPanelNormal * 9 / 16);
+    final panelW = _theatreMode ? kPanelTheatre : kPanelNormal;
 
-    return Column(
-      children: [
+    // Available height = screen height minus title bar (~32) and app header (~52)
+    final availableH = MediaQuery.of(context).size.height - 32 - 52;
+    final metaReserve = (availableH * 0.48).clamp(280.0, 440.0);
+    final maxPlayerH = (availableH - metaReserve).clamp(80.0, availableH * 0.65);
+
+    return ValueListenableBuilder<double?>(
+      valueListenable: _controller.aspectRatio,
+      builder: (context, aspect, _) {
+        // For images/GIFs: use actual aspect ratio, capped by available space
+        // Use actual aspect ratio for all media types when known
+        double playerH;
+        if (aspect != null) {
+          playerH = (panelW / aspect).clamp(100.0, maxPlayerH);
+        } else {
+          playerH = panelW * 9 / 16;
+        }
+
+        return SizedBox(
+          height: availableH,
+          child: Column(
+          children: [
         // ── Player ─────────────────────────────────────────────────────────
         AnimatedContainer(
           duration: const Duration(milliseconds: 200),
@@ -141,7 +154,7 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
                   filePath: filePath,
                   controller: _controller,
                   compact: true,
-                  onExpand: _openFullPlayer,
+                  // No onExpand — full player accessible via icon button in meta
                   // No onTimerEnd — autoplay only in FullPlayerScreen
                 ),
               ),
@@ -162,65 +175,96 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
 
         // ── Meta + actions ─────────────────────────────────────────────────
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  widget.item.originalName,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Meta: filename + fileinfo row with icon actions ──────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.item.originalName,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${_fmtBytes(widget.item.sizeBytes)}  •  ${widget.item.type.name.toUpperCase()}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        _IconActionBtn(
+                          icon: Icons.open_in_new,
+                          tooltip: 'Open in system',
+                          onTap: widget.onOpen,
+                        ),
+                        const SizedBox(width: 4),
+                        _IconActionBtn(
+                          icon: Icons.open_in_full,
+                          tooltip: 'Full player view',
+                          onTap: _openFullPlayer,
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_fmtBytes(widget.item.sizeBytes)}  •  ${widget.item.type.name.toUpperCase()}',
-                  style: Theme.of(context).textTheme.bodySmall,
+              ),
+
+              const Divider(height: 1),
+
+              // ── Tags — fill remaining space, clip if too many ─────────────
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                  child: ClipRect(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FutureBuilder<List<Tag>>(
+                          key: ValueKey('tags_${widget.item.id}'),
+                          future: widget.loadTags(),
+                          builder: (ctx, snap) {
+                            final tags = snap.data ?? [];
+                            if (tags.isEmpty) return const Text('No tags', style: TextStyle(fontSize: 12, color: Colors.grey));
+                            return Wrap(spacing: 4, runSpacing: 4,
+                                children: [for (final t in tags) Chip(label: Text(t.name), materialTapTargetSize: MaterialTapTargetSize.shrinkWrap)]);
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        FutureBuilder<List<TagKeyValue>>(
+                          key: ValueKey('kv_${widget.item.id}'),
+                          future: widget.loadKeyValues(),
+                          builder: (ctx, snap) {
+                            final kv = snap.data ?? [];
+                            if (kv.isEmpty) return const SizedBox.shrink();
+                            return Wrap(spacing: 4, runSpacing: 4,
+                                children: [for (final v in kv) Chip(label: Text(formatKeyValueChip(v)), materialTapTargetSize: MaterialTapTargetSize.shrinkWrap)]);
+                          },
+                        ),
+                        for (final w in widget.extraActions) ...[
+                          const SizedBox(height: 6),
+                          w,
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 10),
-
-                FutureBuilder<List<Tag>>(
-                  key: ValueKey('tags_${widget.item.id}'),
-                  future: widget.loadTags(),
-                  builder: (ctx, snap) {
-                    final tags = snap.data ?? [];
-                    if (tags.isEmpty) return const Text('No tags', style: TextStyle(fontSize: 12));
-                    return Wrap(spacing: 6, runSpacing: 6,
-                        children: [for (final t in tags) Chip(label: Text(t.name))]);
-                  },
-                ),
-                const SizedBox(height: 4),
-                FutureBuilder<List<TagKeyValue>>(
-                  key: ValueKey('kv_${widget.item.id}'),
-                  future: widget.loadKeyValues(),
-                  builder: (ctx, snap) {
-                    final kv = snap.data ?? [];
-                    if (kv.isEmpty) return const SizedBox.shrink();
-                    return Wrap(spacing: 6, runSpacing: 6,
-                        children: [for (final v in kv) Chip(label: Text(formatKeyValueChip(v)))]);
-                  },
-                ),
-
-                const Divider(height: 20),
-
-                _ActionBtn(icon: Icons.open_in_new,    label: 'Open in system',   onTap: widget.onOpen),
-                _ActionBtn(icon: Icons.open_in_full,   label: 'Full player view', onTap: _openFullPlayer),
-                _ActionBtn(icon: Icons.download,       label: 'Export to disk',   onTap: widget.onExport),
-                if (widget.onMove != null)
-                  _ActionBtn(icon: Icons.drive_file_move, label: 'Move',          onTap: widget.onMove!),
-                _ActionBtn(icon: Icons.sell,           label: 'Tags',             onTap: widget.onTags),
-                _ActionBtn(icon: Icons.delete,         label: 'Delete',           onTap: widget.onDelete, destructive: true),
-
-                for (final w in widget.extraActions) ...[
-                  const SizedBox(height: 6),
-                  w,
-                ],
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      ],
+          ],
+        ),
+        );
+      }, // builder
     );
   }
 
@@ -259,22 +303,27 @@ class _OverlayBtn extends StatelessWidget {
   }
 }
 
-class _ActionBtn extends StatelessWidget {
+class _IconActionBtn extends StatelessWidget {
   final IconData icon;
-  final String label;
+  final String tooltip;
   final VoidCallback onTap;
-  final bool destructive;
-  const _ActionBtn({required this.icon, required this.label, required this.onTap, this.destructive = false});
+  const _IconActionBtn({required this.icon, required this.tooltip, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final color = destructive ? Colors.redAccent : null;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, size: 16, color: color),
-        label: Text(label, style: color != null ? TextStyle(color: color) : null),
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Icon(icon, size: 15, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+        ),
       ),
     );
   }
