@@ -1108,67 +1108,95 @@ class _BottomBar extends StatelessWidget {
     required this.onSortChanged,
     required this.onTypeFilterChanged,
   });
+@override
+Widget build(BuildContext context) {
+  final app = context.watch<AppState>();
+  final filterLabel = typeFilters.isEmpty
+      ? 'All'
+      : typeFilters.map((f) => f.label).join(', ');
+  final sortLabel = sortField == _SortField.random
+      ? 'Random'
+      : '${sortField.label} ${sortAscending ? '↑' : '↓'}';
 
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final filterLabel = typeFilters.isEmpty
-        ? 'All'
-        : typeFilters.map((f) => f.label).join(', ');
-    final sortLabel = sortField == _SortField.random
-        ? 'Random'
-        : '${sortField.label} ${sortAscending ? '↑' : '↓'}';
+return LayoutBuilder(
+  builder: (context, constraints) {
+    final narrow = constraints.maxWidth < 580;
 
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Row(
+    if (!narrow) {
+      return Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // ─── Left group: import / select / actions / export ───
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: onToggleSelectMode,
+                icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
+                label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
+                style: selectMode ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary) : null,
+              ),
+              if (selectMode && app.selectedItemIds.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
+              ],
+              const SizedBox(width: 8),
+              OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
+            ]),
+            const SizedBox(width: 16),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              SortButton(label: sortLabel, sortField: sortField, sortAscending: sortAscending, onChanged: onSortChanged),
+              const SizedBox(width: 8),
+              TypeFilterButton(label: filterLabel, selected: typeFilters, onChanged: onTypeFilterChanged),
+            ]),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
                 FilledButton.icon(onPressed: onImport, icon: const Icon(Icons.file_upload), label: const Text('Import')),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: onToggleSelectMode,
                   icon: Icon(selectMode ? Icons.check_box : Icons.check_box_outline_blank),
                   label: Text(selectMode ? 'Select (${app.selectedItemIds.length})' : 'Select'),
-                  style: selectMode
-                      ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
-                      : null,
+                  style: selectMode ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary) : null,
                 ),
                 if (selectMode && app.selectedItemIds.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   OutlinedButton.icon(onPressed: onBulk, icon: const Icon(Icons.more_horiz), label: const Text('Actions')),
                 ],
-                const SizedBox(width: 8),
-                OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
-              ],
-            ),
-            const SizedBox(width: 16),
-            // ─── Right group: sort / filter ───
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SortButton(
-                  label: sortLabel,
-                  sortField: sortField,
-                  sortAscending: sortAscending,
-                  onChanged: onSortChanged,
-                ),
-                const SizedBox(width: 8),
-                TypeFilterButton(
-                  label: filterLabel,
-                  selected: typeFilters,
-                  onChanged: onTypeFilterChanged,
-                ),
-              ],
-            ),
-          ],
+              ]),
+              const SizedBox(height: 4),
+              OutlinedButton.icon(onPressed: app.globalSearchActive ? null : onExportFolder, icon: const Icon(Icons.folder_open), label: const Text('Export folder')),
+            ],
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SortButton(label: sortLabel, sortField: sortField, sortAscending: sortAscending, onChanged: onSortChanged),
+              const SizedBox(height: 4),
+              TypeFilterButton(label: filterLabel, selected: typeFilters, onChanged: onTypeFilterChanged),
+            ],
+          ),
+        ],
       ),
     );
-  }
+  },
+);
+}
 }
 
 
