@@ -61,12 +61,20 @@ class MediaItem {
   }
 }
 
+class TagGroup {
+  final String id;
+  final String name;
+  final int sortOrder;
+  TagGroup({required this.id, required this.name, this.sortOrder = 0});
+}
+
 class Tag {
   final String id;
   final String name;
   final String description;
   final int sortOrder;
-  Tag({required this.id, required this.name, this.description = '', this.sortOrder = 0});
+  final String? groupId;
+  Tag({required this.id, required this.name, this.description = '', this.sortOrder = 0, this.groupId});
 }
 
 class TagKey {

@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 11,
+        version: 12,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
         },
@@ -29,6 +29,7 @@ class AppDb {
           if (oldVersion < 9) await _upgradeToV9(db);
           if (oldVersion < 10) await _upgradeToV10(db);
           if (oldVersion < 11) await _upgradeToV11(db);
+          if (oldVersion < 12) await _upgradeToV12(db);
         },
       ),
     );
@@ -80,11 +81,20 @@ class AppDb {
     ''');
 
     await db.execute('''
+      CREATE TABLE tag_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+
+    await db.execute('''
       CREATE TABLE tags (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         description TEXT DEFAULT '',
-        sort_order INTEGER DEFAULT 0
+        sort_order INTEGER DEFAULT 0,
+        group_id TEXT REFERENCES tag_groups(id) ON DELETE SET NULL
       );
     ''');
 
@@ -157,6 +167,7 @@ class AppDb {
     await db.execute('CREATE INDEX idx_items_subcategory_id ON items(subcategory_id);');
     await db.execute('CREATE INDEX idx_item_tags_tag_id ON item_tags(tag_id);');
     await db.execute('CREATE INDEX idx_item_tags_item_id ON item_tags(item_id);');
+    await db.execute('CREATE INDEX idx_tags_group_id ON tags(group_id);');
     await db.execute('CREATE INDEX idx_tag_key_values_key_id ON tag_key_values(key_id);');
     await db.execute('CREATE INDEX idx_item_kv_kv_id ON item_tag_key_values(key_value_id);');
     await db.execute('CREATE INDEX idx_item_kv_item_id ON item_tag_key_values(item_id);');
@@ -495,5 +506,17 @@ class AppDb {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_qr_preset_tags ON quick_roll_simple_tags(preset_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_qr_preset_kv ON quick_roll_key_values(preset_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_qr_preset_cats ON quick_roll_categories(preset_id);');
+  }
+
+  Future<void> _upgradeToV12(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tag_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );
+    ''');
+    try { await db.execute('ALTER TABLE tags ADD COLUMN group_id TEXT REFERENCES tag_groups(id) ON DELETE SET NULL'); } catch (_) {}
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_tags_group_id ON tags(group_id);');
   }
 }

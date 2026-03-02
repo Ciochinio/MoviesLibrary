@@ -43,6 +43,79 @@ class _TagFilterPanelState extends State<TagFilterPanel> {
     return tags.where((t) => t.name.toLowerCase().contains(query)).toList();
   }
 
+  List<Widget> _buildGroupedSimpleTags(BuildContext context, AppState app) {
+    final groups = app.tagGroupList;
+    final allTags = _filterSimpleTags(app.tagList);
+    final widgets = <Widget>[];
+
+    for (final g in groups) {
+      final groupTags = allTags.where((t) => t.groupId == g.id).toList();
+      if (groupTags.isEmpty) continue;
+
+      widgets.add(ExpansionTile(
+        title: Text(g.name),
+        initiallyExpanded: _searchQuery.isNotEmpty,
+        children: groupTags.map((tag) => CheckboxListTile(
+          dense: true,
+          value: widget.selectedSimpleTags.contains(tag.id),
+          title: Text(tag.name),
+          onChanged: (checked) {
+            setState(() {
+              if (checked == true) {
+                widget.selectedSimpleTags.add(tag.id);
+              } else {
+                widget.selectedSimpleTags.remove(tag.id);
+              }
+            });
+          },
+        )).toList(),
+      ));
+    }
+
+    // Ungrouped tags
+    final ungrouped = allTags.where((t) => t.groupId == null).toList();
+    if (ungrouped.isNotEmpty) {
+      if (groups.isNotEmpty) {
+        widgets.add(ExpansionTile(
+          title: const Text('Other'),
+          initiallyExpanded: _searchQuery.isNotEmpty,
+          children: ungrouped.map((tag) => CheckboxListTile(
+            dense: true,
+            value: widget.selectedSimpleTags.contains(tag.id),
+            title: Text(tag.name),
+            onChanged: (checked) {
+              setState(() {
+                if (checked == true) {
+                  widget.selectedSimpleTags.add(tag.id);
+                } else {
+                  widget.selectedSimpleTags.remove(tag.id);
+                }
+              });
+            },
+          )).toList(),
+        ));
+      } else {
+        // No groups at all — flat list (same as before)
+        widgets.addAll(ungrouped.map((tag) => CheckboxListTile(
+          dense: true,
+          value: widget.selectedSimpleTags.contains(tag.id),
+          title: Text(tag.name),
+          onChanged: (checked) {
+            setState(() {
+              if (checked == true) {
+                widget.selectedSimpleTags.add(tag.id);
+              } else {
+                widget.selectedSimpleTags.remove(tag.id);
+              }
+            });
+          },
+        )));
+      }
+    }
+
+    return widgets;
+  }
+
   List<TagKey> _filterTagKeys(List<TagKey> keys) {
     if (_searchQuery.isEmpty) return keys;
     final query = _searchQuery.toLowerCase();
@@ -188,20 +261,7 @@ class _TagFilterPanelState extends State<TagFilterPanel> {
                     child: Text('No tags. Add some in Tags screen.', style: TextStyle(fontStyle: FontStyle.italic)),
                   )
                 else
-                  ..._filterSimpleTags(app.tagList).map((tag) => CheckboxListTile(
-                        dense: true,
-                        value: widget.selectedSimpleTags.contains(tag.id),
-                        title: Text(tag.name),
-                        onChanged: (checked) {
-                          setState(() {
-                            if (checked == true) {
-                              widget.selectedSimpleTags.add(tag.id);
-                            } else {
-                              widget.selectedSimpleTags.remove(tag.id);
-                            }
-                          });
-                        },
-                      )),
+                  ..._buildGroupedSimpleTags(context, app),
               ],
             ),
           ),

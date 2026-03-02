@@ -5,9 +5,8 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 
 /// Reusable side-by-side tag picker body widget.
-/// Simple tags on the left, custom (key:value) tags on the right.
-/// Both displayed as FilterChip Wraps.
-/// Custom tags are single-pick per key (selecting a new value deselects the old one).
+/// Simple tags on the left (grouped), custom (key:value) tags on the right.
+/// Custom tags are single-pick per key.
 class TagPickerBody extends StatelessWidget {
   final Set<String> simpleSelected;
   final Set<String> kvSelected;
@@ -25,13 +24,14 @@ class TagPickerBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final tags = app.tagList;
+    final groups = app.tagGroupList;
+    final allTags = app.tagList;
     final keys = app.tagKeyList;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ─── Left: Simple Tags ───
+        // ─── Left: Simple Tags (grouped) ───
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -39,22 +39,14 @@ class TagPickerBody extends StatelessWidget {
               Text('Simple Tags', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               Expanded(
-                child: tags.isEmpty
+                child: allTags.isEmpty
                     ? const Text('No tags. Create them in the Tags tab.')
                     : SingleChildScrollView(
-                        child: Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            for (final t in tags)
-                              FilterChip(
-                                label: Text(t.name),
-                                tooltip: t.description.isNotEmpty ? t.description : null,
-                                selected: simpleSelected.contains(t.id),
-                                showCheckmark: false,
-                                onSelected: (v) => onSimpleChanged(t.id, v),
-                              ),
-                          ],
+                        child: _GroupedSimpleTagPicker(
+                          groups: groups,
+                          allTags: allTags,
+                          selected: simpleSelected,
+                          onChanged: onSimpleChanged,
                         ),
                       ),
               ),
@@ -105,8 +97,89 @@ class TagPickerBody extends StatelessWidget {
   }
 }
 
+/// Grouped simple tag chips — groups rendered as headers with their chips,
+/// ungrouped tags at the bottom under "Other".
+class _GroupedSimpleTagPicker extends StatelessWidget {
+  final List<TagGroup> groups;
+  final List<Tag> allTags;
+  final Set<String> selected;
+  final void Function(String id, bool selected) onChanged;
+
+  const _GroupedSimpleTagPicker({
+    required this.groups,
+    required this.allTags,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ungrouped = allTags.where((t) => t.groupId == null).toList();
+    final hasAnyGroupedTags = groups.any((g) => allTags.any((t) => t.groupId == g.id));
+
+    final children = <Widget>[];
+
+    for (final g in groups) {
+      final groupTags = allTags.where((t) => t.groupId == g.id).toList();
+      if (groupTags.isEmpty) continue;
+
+      children.add(Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Text(
+          g.name,
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+        ),
+      ));
+      children.add(Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final t in groupTags)
+            FilterChip(
+              label: Text(t.name),
+              tooltip: t.description.isNotEmpty ? t.description : null,
+              selected: selected.contains(t.id),
+              showCheckmark: false,
+              onSelected: (v) => onChanged(t.id, v),
+            ),
+        ],
+      ));
+    }
+
+    if (ungrouped.isNotEmpty) {
+      if (hasAnyGroupedTags) {
+        children.add(Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Text(
+            'Other',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+          ),
+        ));
+      }
+      children.add(Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final t in ungrouped)
+            FilterChip(
+              label: Text(t.name),
+              tooltip: t.description.isNotEmpty ? t.description : null,
+              selected: selected.contains(t.id),
+              showCheckmark: false,
+              onSelected: (v) => onChanged(t.id, v),
+            ),
+        ],
+      ));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+}
+
 /// Single-pick chip group for values within one key.
-/// Selecting a value deselects any other value in the same key.
 class _SinglePickKeyValues extends StatelessWidget {
   final String keyId;
   final List<TagKeyValue> values;
@@ -133,7 +206,6 @@ class _SinglePickKeyValues extends StatelessWidget {
             showCheckmark: false,
             onSelected: (sel) {
               if (sel) {
-                // Deselect any other value in the same key first
                 for (final other in values) {
                   if (other.id != v.id && kvSelected.contains(other.id)) {
                     onKvChanged(other.id, false);
@@ -146,6 +218,66 @@ class _SinglePickKeyValues extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Calculates the appropriate dialog size based on tag/group content.
+/// Grows to fit content, clamped between min and 85% of screen height.
+Size _calculateDialogSize(BuildContext context, AppState app) {
+  const double chipHeight = 36;
+  const double chipSpacing = 6;
+  const double groupHeaderHeight = 28;
+  const double sectionTitleHeight = 32;
+  const double padding = 48;
+  const double minWidth = 600;
+  const double maxWidth = 900;
+  const double minHeight = 300;
+
+  final screenHeight = MediaQuery.of(context).size.height;
+  final maxHeight = screenHeight * 0.85;
+
+  // ── Left column: simple tags ──
+  double leftHeight = sectionTitleHeight;
+  final groups = app.tagGroupList;
+  final allTags = app.tagList;
+
+  for (final g in groups) {
+    final groupTags = allTags.where((t) => t.groupId == g.id).toList();
+    if (groupTags.isEmpty) continue;
+    leftHeight += groupHeaderHeight;
+    // Estimate chip rows (assume ~3 chips per row on average)
+    final rows = (groupTags.length / 3).ceil();
+    leftHeight += rows * (chipHeight + chipSpacing);
+    leftHeight += 8; // spacing between groups
+  }
+
+  final ungrouped = allTags.where((t) => t.groupId == null).toList();
+  if (ungrouped.isNotEmpty) {
+    if (groups.isNotEmpty) leftHeight += groupHeaderHeight;
+    final rows = (ungrouped.length / 3).ceil();
+    leftHeight += rows * (chipHeight + chipSpacing);
+  }
+
+  // ── Right column: custom tags ──
+  double rightHeight = sectionTitleHeight;
+  for (final k in app.tagKeyList) {
+    rightHeight += groupHeaderHeight;
+    final values = app.valuesForKey(k.id);
+    final rows = (values.length / 3).ceil().clamp(1, 100);
+    rightHeight += rows * (chipHeight + chipSpacing) + 8;
+  }
+
+  final contentHeight = [leftHeight, rightHeight].reduce((a, b) => a > b ? a : b);
+  final dialogHeight = (contentHeight + padding).clamp(minHeight, maxHeight);
+
+  // Width grows slightly if there are many groups/keys
+  final totalSections = groups.length + app.tagKeyList.length;
+  final dialogWidth = totalSections > 8
+      ? maxWidth
+      : totalSections > 4
+          ? 760.0
+          : minWidth;
+
+  return Size(dialogWidth, dialogHeight);
 }
 
 /// Dialog to manage both kinds of tags for a single item.
@@ -162,11 +294,14 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
     builder: (ctx) {
       return StatefulBuilder(
         builder: (ctx, setState) {
+          final app = ctx.watch<AppState>();
+          final size = _calculateDialogSize(ctx, app);
+
           return AlertDialog(
             title: const Text('Tags'),
             content: SizedBox(
-              width: 760,
-              height: 500,
+              width: size.width,
+              height: size.height,
               child: TagPickerBody(
                 simpleSelected: simpleSelected,
                 kvSelected: kvSelected,

@@ -45,6 +45,7 @@ class AppState extends ChangeNotifier {
   List<Category> _categoryList = [];
   final Map<String, List<Subcategory>> _subByCat = {};
   List<Tag> _tagList = [];
+  List<TagGroup> _tagGroupList = [];
   List<TagKey> _tagKeyList = [];
   final Map<String, List<TagKeyValue>> _tagValuesByKey = {};
 
@@ -56,6 +57,7 @@ class AppState extends ChangeNotifier {
   List<Category> get categoryList => _categoryList;
   List<Subcategory> subcategoriesFor(String categoryId) => _subByCat[categoryId] ?? [];
   List<Tag> get tagList => _tagList;
+  List<TagGroup> get tagGroupList => _tagGroupList;
   List<TagKey> get tagKeyList => _tagKeyList;
   List<TagKeyValue> valuesForKey(String keyId) => _tagValuesByKey[keyId] ?? const [];
 
@@ -142,6 +144,7 @@ class AppState extends ChangeNotifier {
       _subByCat[c.id] = await categories!.listSubcategories(c.id);
     }
     _tagList = await tags!.listTags();
+    _tagGroupList = await tags!.listTagGroups();
 
     _tagKeyList = await tags!.listTagKeys();
     _tagValuesByKey.clear();
@@ -182,6 +185,33 @@ class AppState extends ChangeNotifier {
 
   Future<void> reorderTagKeyValues(List<String> orderedIds) async {
     await tags!.reorderTagKeyValues(orderedIds);
+    await refreshAll();
+  }
+
+  // ─── Tag Groups ───────────────────────────────
+
+  Future<void> createTagGroup(String name) async {
+    await tags!.createTagGroup(name);
+    await refreshAll();
+  }
+
+  Future<void> renameTagGroup(String id, String newName) async {
+    await tags!.renameTagGroup(id, newName);
+    await refreshAll();
+  }
+
+  Future<void> deleteTagGroup(String groupId) async {
+    await tags!.deleteTagGroup(groupId);
+    await refreshAll();
+  }
+
+  Future<void> reorderTagGroups(List<String> orderedIds) async {
+    await tags!.reorderTagGroups(orderedIds);
+    await refreshAll();
+  }
+
+  Future<void> setTagGroup(String tagId, String? groupId) async {
+    await tags!.setTagGroup(tagId, groupId);
     await refreshAll();
   }
 
