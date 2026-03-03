@@ -45,10 +45,11 @@ class TagsScreen extends StatelessWidget {
   }
 
   static Future<({String name, String description})?> _promptWithDescription(
-    BuildContext context, 
-    String title, 
-    {String? initialName, String? initialDescription}
-  ) async {
+    BuildContext context,
+    String title, {
+    String? initialName,
+    String? initialDescription,
+  }) async {
     final nameCtrl = TextEditingController(text: initialName ?? '');
     final descCtrl = TextEditingController(text: initialDescription ?? '');
     return showDialog<({String name, String description})>(
@@ -91,7 +92,7 @@ class TagsScreen extends StatelessWidget {
 }
 
 // ──────────────────────────────────────────────
-// Simple Tags Tab — groups with drag-to-reorder
+// Simple Tags Tab
 // ──────────────────────────────────────────────
 class _SimpleTagsTab extends StatelessWidget {
   const _SimpleTagsTab();
@@ -101,8 +102,6 @@ class _SimpleTagsTab extends StatelessWidget {
     final app = context.watch<AppState>();
     final groups = app.tagGroupList;
     final allTags = app.tagList;
-
-    // Partition tags by group
     final ungrouped = allTags.where((t) => t.groupId == null).toList();
 
     return Column(
@@ -111,7 +110,7 @@ class _SimpleTagsTab extends StatelessWidget {
         Row(
           children: [
             Text(
-              'Drag to reorder within groups',
+              'Use arrows to reorder within groups',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
             ),
             const Spacer(),
@@ -142,13 +141,11 @@ class _SimpleTagsTab extends StatelessWidget {
         Expanded(
           child: ListView(
             children: [
-              // ── One ExpansionTile per group ──
               if (groups.isEmpty && ungrouped.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(16),
                   child: Text('No tags yet. Add the first one above.'),
                 ),
-
               for (int gi = 0; gi < groups.length; gi++)
                 _GroupTile(
                   key: ValueKey(groups[gi].id),
@@ -157,8 +154,6 @@ class _SimpleTagsTab extends StatelessWidget {
                   groupIndex: gi,
                   groupCount: groups.length,
                 ),
-
-              // ── "Other" catch-all for ungrouped tags ──
               if (ungrouped.isNotEmpty)
                 _UngroupedTile(tags: ungrouped),
             ],
@@ -169,7 +164,7 @@ class _SimpleTagsTab extends StatelessWidget {
   }
 }
 
-// ── Group tile (ExpansionTile + reorderable tags inside) ──────────────────────
+// ── Group tile ────────────────────────────────────────────────────────────────
 class _GroupTile extends StatelessWidget {
   final TagGroup group;
   final List<Tag> tags;
@@ -230,7 +225,6 @@ class _GroupTile extends StatelessWidget {
               }
             },
           ),
-          // Expand icon handled by ExpansionTile itself
         ],
       ),
       children: [
@@ -240,7 +234,7 @@ class _GroupTile extends StatelessWidget {
             child: Text('No tags in this group.', style: TextStyle(fontSize: 12)),
           )
         else
-          _ReorderableTagList(groupId: group.id, tags: tags),
+          _TagList(groupId: group.id, tags: tags),
         ListTile(
           dense: true,
           leading: const Icon(Icons.add, size: 18),
@@ -259,78 +253,56 @@ class _GroupTile extends StatelessWidget {
   }
 }
 
-// ── Reorderable tag list within a group ───────────────────────────────────────
-class _ReorderableTagList extends StatefulWidget {
+// ── Tag list within a group (no ReorderableListView) ─────────────────────────
+class _TagList extends StatelessWidget {
   final String? groupId;
   final List<Tag> tags;
 
-  const _ReorderableTagList({required this.groupId, required this.tags});
-
-  @override
-  State<_ReorderableTagList> createState() => _ReorderableTagListState();
-}
-
-class _ReorderableTagListState extends State<_ReorderableTagList> {
-  late List<Tag> _tags;
-
-  @override
-  void initState() {
-    super.initState();
-    _tags = List.of(widget.tags);
-  }
-
-  @override
-  void didUpdateWidget(_ReorderableTagList old) {
-    super.didUpdateWidget(old);
-    _tags = List.of(widget.tags);
-  }
+  const _TagList({required this.groupId, required this.tags});
 
   @override
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (int i = 0; i < _tags.length; i++)
+        for (int i = 0; i < tags.length; i++)
           _TagListTile(
-            key: ValueKey(_tags[i].id),
-            tag: _tags[i],
-            index: i,
-            groupId: widget.groupId,
-            totalCount: _tags.length,
-            onMoveUp: i == 0 ? null : () => _move(i, i - 1),
-            onMoveDown: i == _tags.length - 1 ? null : () => _move(i, i + 1),
+            key: ValueKey(tags[i].id),
+            tag: tags[i],
+            groupId: groupId,
+            onMoveUp: i == 0
+                ? null
+                : () async {
+                    final ids = tags.map((t) => t.id).toList();
+                    final id = ids.removeAt(i);
+                    ids.insert(i - 1, id);
+                    await context.read<AppState>().reorderTags(ids);
+                  },
+            onMoveDown: i == tags.length - 1
+                ? null
+                : () async {
+                    final ids = tags.map((t) => t.id).toList();
+                    final id = ids.removeAt(i);
+                    ids.insert(i + 1, id);
+                    await context.read<AppState>().reorderTags(ids);
+                  },
           ),
       ],
     );
   }
-
-  void _move(int from, int to) async {
-    final ids = _tags.map((t) => t.id).toList();
-    final movedId = ids.removeAt(from);
-    ids.insert(to, movedId);
-    setState(() {
-      final tag = _tags.removeAt(from);
-      _tags.insert(to, tag);
-    });
-    await context.read<AppState>().reorderTags(ids);
-  }
 }
 
-// ── Single tag list tile ──────────────────────────────────────────────────────
+// ── Single tag tile ───────────────────────────────────────────────────────────
 class _TagListTile extends StatelessWidget {
   final Tag tag;
-  final int index;
   final String? groupId;
-  final int totalCount;
   final VoidCallback? onMoveUp;
   final VoidCallback? onMoveDown;
 
   const _TagListTile({
     super.key,
     required this.tag,
-    required this.index,
     required this.groupId,
-    required this.totalCount,
     this.onMoveUp,
     this.onMoveDown,
   });
@@ -340,26 +312,6 @@ class _TagListTile extends StatelessWidget {
     final app = context.read<AppState>();
 
     return ListTile(
-      dense: true,
-      leading: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_upward, size: 16),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: onMoveUp,
-            tooltip: 'Move up',
-          ),
-          IconButton(
-            icon: const Icon(Icons.arrow_downward, size: 16),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: onMoveDown,
-            tooltip: 'Move down',
-          ),
-        ],
-      ),
       title: Text(tag.name),
       subtitle: tag.description.isNotEmpty
           ? Text(tag.description, maxLines: 1, overflow: TextOverflow.ellipsis)
@@ -367,6 +319,16 @@ class _TagListTile extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_upward, size: 18),
+            tooltip: 'Move up',
+            onPressed: onMoveUp,
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_downward, size: 18),
+            tooltip: 'Move down',
+            onPressed: onMoveDown,
+          ),
           _GroupPickerButton(tag: tag),
           IconButton(
             tooltip: 'Edit',
@@ -411,7 +373,7 @@ class _TagListTile extends StatelessWidget {
   }
 }
 
-// ── Group picker dropdown button ──────────────────────────────────────────────
+// ── Group picker button ───────────────────────────────────────────────────────
 class _GroupPickerButton extends StatelessWidget {
   final Tag tag;
   const _GroupPickerButton({required this.tag});
@@ -433,7 +395,7 @@ class _GroupPickerButton extends StatelessWidget {
         ),
         const PopupMenuDivider(),
         for (final g in groups)
-          PopupMenuItem<String>(
+          PopupMenuItem<String?>(
             value: g.id,
             child: Row(
               children: [
@@ -464,15 +426,14 @@ class _UngroupedTile extends StatelessWidget {
       subtitle: Text('${tags.length} ungrouped tag${tags.length == 1 ? '' : 's'}',
           style: Theme.of(context).textTheme.bodySmall),
       children: [
-        _ReorderableTagList(groupId: null, tags: tags),
+        _TagList(groupId: null, tags: tags),
       ],
     );
   }
 }
 
 // ──────────────────────────────────────────────
-// Custom Tags (Key:Value) Tab — drag-and-drop
-// reordering for keys
+// Custom Tags (Key:Value) Tab
 // ──────────────────────────────────────────────
 class _KeyValueTagsTab extends StatelessWidget {
   const _KeyValueTagsTab();
@@ -510,7 +471,6 @@ class _KeyValueTagsTab extends StatelessWidget {
             buildDefaultDragHandles: false,
             onReorder: (oldIndex, newIndex) async {
               if (newIndex > oldIndex) newIndex--;
-              // Filter out the "empty" placeholder if present
               final keyIds = app.tagKeyList.map((k) => k.id).toList();
               if (oldIndex >= keyIds.length || newIndex >= keyIds.length) return;
               final movedId = keyIds.removeAt(oldIndex);
@@ -541,7 +501,9 @@ class _KeyValueTagsTab extends StatelessWidget {
         child: const Icon(Icons.drag_handle),
       ),
       title: Text(k.key),
-      subtitle: k.description.isNotEmpty ? Text(k.description, style: const TextStyle(fontSize: 12)) : null,
+      subtitle: k.description.isNotEmpty
+          ? Text(k.description, style: const TextStyle(fontSize: 12))
+          : null,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -550,8 +512,7 @@ class _KeyValueTagsTab extends StatelessWidget {
             icon: const Icon(Icons.edit),
             onPressed: () async {
               final result = await TagsScreen._promptWithDescription(
-                context, 
-                'Edytuj klucz',
+                context, 'Edit key',
                 initialName: k.key,
                 initialDescription: k.description,
               );
@@ -586,62 +547,67 @@ class _KeyValueTagsTab extends StatelessWidget {
         ],
       ),
       children: [
-        // ── Reorderable values list ──────────────────────────────────────
         Builder(
           builder: (context) {
             final values = app.valuesForKey(k.id);
             if (values.isEmpty) {
               return const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text('No values. Add the first one below.',
-                    style: TextStyle(fontSize: 12)),
+                child: Text('No values. Add the first one below.', style: TextStyle(fontSize: 12)),
               );
             }
-            // Cap height so the tile doesn't overflow; grows up to 400px.
-            final listHeight = (values.length * 56.0).clamp(0.0, 400.0);
-            return ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: listHeight),
-              child: ReorderableListView.builder(
-                shrinkWrap: true,
-                buildDefaultDragHandles: false,
-                itemCount: values.length,
-                onReorder: (oldIndex, newIndex) async {
-                  if (newIndex > oldIndex) newIndex--;
-                  final ids = values.map((v) => v.id).toList();
-                  final movedId = ids.removeAt(oldIndex);
-                  ids.insert(newIndex, movedId);
-                  await context.read<AppState>().reorderTagKeyValues(ids);
-                },
-                itemBuilder: (ctx, vi) {
-                  final v = values[vi];
-                  return ListTile(
-                    key: ValueKey(v.id),
+            // Use Column + arrow buttons instead of ReorderableListView to avoid nested scroll crash
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int vi = 0; vi < values.length; vi++)
+                  ListTile(
+                    key: ValueKey(values[vi].id),
                     dense: true,
-                    leading: ReorderableDragStartListener(
-                      index: vi,
-                      child: const Icon(Icons.drag_handle, size: 18),
-                    ),
-                    title: Text(v.value),
-                    subtitle: v.description.isNotEmpty
-                        ? Text(v.description, maxLines: 1, overflow: TextOverflow.ellipsis)
+                    title: Text(values[vi].value),
+                    subtitle: values[vi].description.isNotEmpty
+                        ? Text(values[vi].description, maxLines: 1, overflow: TextOverflow.ellipsis)
                         : null,
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
-                          tooltip: 'Rename',
+                          icon: const Icon(Icons.arrow_upward, size: 16),
+                          tooltip: 'Move up',
+                          onPressed: vi == 0
+                              ? null
+                              : () async {
+                                  final ids = values.map((v) => v.id).toList();
+                                  final id = ids.removeAt(vi);
+                                  ids.insert(vi - 1, id);
+                                  await context.read<AppState>().reorderTagKeyValues(ids);
+                                },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.arrow_downward, size: 16),
+                          tooltip: 'Move down',
+                          onPressed: vi == values.length - 1
+                              ? null
+                              : () async {
+                                  final ids = values.map((v) => v.id).toList();
+                                  final id = ids.removeAt(vi);
+                                  ids.insert(vi + 1, id);
+                                  await context.read<AppState>().reorderTagKeyValues(ids);
+                                },
+                        ),
+                        IconButton(
+                          tooltip: 'Edit',
                           icon: const Icon(Icons.edit),
                           onPressed: () async {
                             final result = await TagsScreen._promptWithDescription(
-                              context,
-                              'Edit value',
-                              initialName: v.value,
-                              initialDescription: v.description,
+                              context, 'Edit value',
+                              initialName: values[vi].value,
+                              initialDescription: values[vi].description,
                             );
                             if (result == null || result.name.trim().isEmpty) return;
                             final a = context.read<AppState>();
-                            await a.tags!.renameValue(v.id, result.name.trim());
-                            await a.tags!.updateValueDescription(v.id, result.description);
+                            await a.tags!.renameValue(values[vi].id, result.name.trim());
+                            await a.tags!.updateValueDescription(values[vi].id, result.description);
                             await a.refreshAll();
                           },
                         ),
@@ -649,7 +615,7 @@ class _KeyValueTagsTab extends StatelessWidget {
                           tooltip: 'Delete',
                           icon: const Icon(Icons.delete),
                           onPressed: () async {
-                            final usage = await context.read<AppState>().countTagKeyValueUsage(v.id);
+                            final usage = await context.read<AppState>().countTagKeyValueUsage(values[vi].id);
                             final ok = await showDialog<bool>(
                               context: context,
                               builder: (c) => AlertDialog(
@@ -662,15 +628,14 @@ class _KeyValueTagsTab extends StatelessWidget {
                               ),
                             );
                             if (ok == true) {
-                              await context.read<AppState>().deleteTagKeyValue(v.id);
+                              await context.read<AppState>().deleteTagKeyValue(values[vi].id);
                             }
                           },
                         ),
                       ],
                     ),
-                  );
-                },
-              ),
+                  ),
+              ],
             );
           },
         ),

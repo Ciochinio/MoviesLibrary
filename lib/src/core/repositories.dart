@@ -226,15 +226,16 @@ class TagRepo {
   final Database db;
   TagRepo(this.db);
 
-  Future<List<Tag>> listTags() async {
-    final rows = await db.query('tags', orderBy: 'sort_order ASC, name COLLATE NOCASE');
-    return rows.map((r) => Tag(
-      id: r['id'] as String,
-      name: r['name'] as String,
-      description: (r['description'] as String?) ?? '',
-      sortOrder: (r['sort_order'] as int?) ?? 0,
-    )).toList();
-  }
+Future<List<Tag>> listTags() async {
+  final rows = await db.query('tags', orderBy: 'sort_order ASC, name COLLATE NOCASE');
+  return rows.map((r) => Tag(
+    id: r['id'] as String,
+    name: r['name'] as String,
+    description: (r['description'] as String?) ?? '',
+    sortOrder: (r['sort_order'] as int?) ?? 0,
+    groupId: r['group_id'] as String?,
+  )).toList();
+}
 
   Future<Tag> createTag(String name, {String description = ''}) async {
     final id = _uuid.v4();
