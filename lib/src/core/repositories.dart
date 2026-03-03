@@ -233,49 +233,7 @@ class TagRepo {
       name: r['name'] as String,
       description: (r['description'] as String?) ?? '',
       sortOrder: (r['sort_order'] as int?) ?? 0,
-      groupId: r['group_id'] as String?,
     )).toList();
-  }
-
-  // ─── Tag Groups ──────────────────────────────────────────────────────────────
-
-  Future<List<TagGroup>> listTagGroups() async {
-    final rows = await db.query('tag_groups', orderBy: 'sort_order ASC, name COLLATE NOCASE');
-    return rows.map((r) => TagGroup(
-      id: r['id'] as String,
-      name: r['name'] as String,
-      sortOrder: (r['sort_order'] as int?) ?? 0,
-    )).toList();
-  }
-
-  Future<TagGroup> createTagGroup(String name) async {
-    final id = _uuid.v4();
-    final maxRows = await db.rawQuery('SELECT MAX(sort_order) as m FROM tag_groups');
-    final maxOrder = (maxRows.first['m'] as int?) ?? 0;
-    await db.insert('tag_groups', {'id': id, 'name': name, 'sort_order': maxOrder + 1});
-    return TagGroup(id: id, name: name, sortOrder: maxOrder + 1);
-  }
-
-  Future<void> renameTagGroup(String id, String newName) async {
-    await db.update('tag_groups', {'name': newName}, where: 'id=?', whereArgs: [id]);
-  }
-
-  Future<void> deleteTagGroup(String groupId) async {
-    // Unassign tags in this group before deleting
-    await db.update('tags', {'group_id': null}, where: 'group_id=?', whereArgs: [groupId]);
-    await db.delete('tag_groups', where: 'id=?', whereArgs: [groupId]);
-  }
-
-  Future<void> reorderTagGroups(List<String> orderedIds) async {
-    await db.transaction((txn) async {
-      for (int i = 0; i < orderedIds.length; i++) {
-        await txn.update('tag_groups', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
-      }
-    });
-  }
-
-  Future<void> setTagGroup(String tagId, String? groupId) async {
-    await db.update('tags', {'group_id': groupId}, where: 'id=?', whereArgs: [tagId]);
   }
 
   Future<Tag> createTag(String name, {String description = ''}) async {
@@ -466,7 +424,43 @@ class TagRepo {
       }
     });
   }
+ Future<List<TagGroup>> listTagGroups() async {
+  final rows = await db.query('tag_groups', orderBy: 'sort_order ASC, name COLLATE NOCASE');
+  return rows.map((r) => TagGroup(
+    id: r['id'] as String,
+    name: r['name'] as String,
+    sortOrder: (r['sort_order'] as int?) ?? 0,
+  )).toList();
+}
 
+Future<TagGroup> createTagGroup(String name) async {
+  final id = _uuid.v4();
+  final maxRows = await db.rawQuery('SELECT MAX(sort_order) as m FROM tag_groups');
+  final maxOrder = (maxRows.first['m'] as int?) ?? 0;
+  await db.insert('tag_groups', {'id': id, 'name': name, 'sort_order': maxOrder + 1});
+  return TagGroup(id: id, name: name, sortOrder: maxOrder + 1);
+}
+
+Future<void> renameTagGroup(String id, String newName) async {
+  await db.update('tag_groups', {'name': newName}, where: 'id=?', whereArgs: [id]);
+}
+
+Future<void> deleteTagGroup(String groupId) async {
+  await db.update('tags', {'group_id': null}, where: 'group_id=?', whereArgs: [groupId]);
+  await db.delete('tag_groups', where: 'id=?', whereArgs: [groupId]);
+}
+
+Future<void> reorderTagGroups(List<String> orderedIds) async {
+  await db.transaction((txn) async {
+    for (int i = 0; i < orderedIds.length; i++) {
+      await txn.update('tag_groups', {'sort_order': i}, where: 'id=?', whereArgs: [orderedIds[i]]);
+    }
+  });
+}
+
+Future<void> setTagGroup(String tagId, String? groupId) async {
+  await db.update('tags', {'group_id': groupId}, where: 'id=?', whereArgs: [tagId]);
+}
   /// Ensures every tag key has a unique, sequential sort_order.
   Future<void> _normalizeTagKeySortOrders() async {
     final keys = await db.query('tag_keys', orderBy: 'sort_order ASC, key COLLATE NOCASE');
@@ -562,6 +556,13 @@ class TagRepo {
     if (existing.isNotEmpty) return existing.first['id'] as String;
     final t = await createTag(name);
     return t.id;
+  }
+
+  /// Returns the key_id for a given key_value id, or null if not found.
+  Future<String?> getKeyIdForValue(String keyValueId) async {
+    final rows = await db.query('tag_key_values', columns: ['key_id'], where: 'id=?', whereArgs: [keyValueId], limit: 1);
+    if (rows.isEmpty) return null;
+    return rows.first['key_id'] as String?;
   }
 
   Future<String> getOrCreateTagKeyId(String key) async {

@@ -187,34 +187,30 @@ class AppState extends ChangeNotifier {
     await tags!.reorderTagKeyValues(orderedIds);
     await refreshAll();
   }
-
-  // ─── Tag Groups ───────────────────────────────
-
   Future<void> createTagGroup(String name) async {
-    await tags!.createTagGroup(name);
-    await refreshAll();
-  }
+  await tags!.createTagGroup(name);
+  await refreshAll();
+}
 
-  Future<void> renameTagGroup(String id, String newName) async {
-    await tags!.renameTagGroup(id, newName);
-    await refreshAll();
-  }
+Future<void> renameTagGroup(String id, String newName) async {
+  await tags!.renameTagGroup(id, newName);
+  await refreshAll();
+}
 
-  Future<void> deleteTagGroup(String groupId) async {
-    await tags!.deleteTagGroup(groupId);
-    await refreshAll();
-  }
+Future<void> deleteTagGroup(String groupId) async {
+  await tags!.deleteTagGroup(groupId);
+  await refreshAll();
+}
 
-  Future<void> reorderTagGroups(List<String> orderedIds) async {
-    await tags!.reorderTagGroups(orderedIds);
-    await refreshAll();
-  }
+Future<void> reorderTagGroups(List<String> orderedIds) async {
+  await tags!.reorderTagGroups(orderedIds);
+  await refreshAll();
+}
 
-  Future<void> setTagGroup(String tagId, String? groupId) async {
-    await tags!.setTagGroup(tagId, groupId);
-    await refreshAll();
-  }
-
+Future<void> setTagGroup(String tagId, String? groupId) async {
+  await tags!.setTagGroup(tagId, groupId);
+  await refreshAll();
+}
   Future<void> selectSubcategory(String categoryId, String subcategoryId) async {
   // Switching folders exits global search mode.
   globalSearchTagIds.clear();
@@ -467,6 +463,8 @@ Future<String> _hashFile(File f) async {
   }
 
   /// Applies auto-tags configured for a subcategory to a single item.
+  /// For custom tags (key-value), removes any existing value for the same key
+  /// before applying the new one, enforcing single-pick per key.
   Future<void> applyAutoTagsToItem(String itemId, String subcategoryId) async {
     if (!isReady) return;
     final autoTagIds = await categories!.getAutoTagIds(subcategoryId);
@@ -477,6 +475,19 @@ Future<String> _hashFile(File f) async {
       await items!.addTagToItem(itemId, tagId);
     }
     for (final kvId in autoKvIds) {
+      // Find which key this value belongs to
+      final keyId = await tags!.getKeyIdForValue(kvId);
+      if (keyId != null) {
+        // Remove any existing value the item has for this key
+        final existingKvIds = await items!.listKeyValueIdsForItem(itemId);
+        final valuesForKey = await tags!.listValuesForKey(keyId);
+        final valuesForKeyIds = valuesForKey.map((v) => v.id).toSet();
+        for (final existing in existingKvIds) {
+          if (valuesForKeyIds.contains(existing)) {
+            await items!.removeKeyValueFromItem(itemId, existing);
+          }
+        }
+      }
       await items!.addKeyValueToItem(itemId, kvId);
     }
     // Update sidecar with new tags

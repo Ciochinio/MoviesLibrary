@@ -150,6 +150,124 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  // ── Context menu ────────────────────────────────────────────────────────
+
+  void _handleContextMenu(BuildContext gridContext, MediaItem item, Offset globalPosition) {
+    final app = context.read<AppState>();
+    final filePath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
+    final isVideo = item.type == ItemType.video;
+    final isGif = item.type == ItemType.image && p.extension(filePath).toLowerCase() == '.gif';
+    final showThumbOption = isVideo || isGif;
+    showMenu<String>(
+      context: gridContext,
+      position: RelativeRect.fromLTRB(globalPosition.dx, globalPosition.dy, globalPosition.dx, globalPosition.dy),
+      items: [
+        const PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit, size: 20), SizedBox(width: 12), Text('Rename...')])),
+        const PopupMenuItem(value: 'tags', child: Row(children: [Icon(Icons.sell, size: 20), SizedBox(width: 12), Text('Tagi...')])),
+        if (showThumbOption)
+          const PopupMenuItem(value: 'thumbnail', child: Row(children: [Icon(Icons.photo_camera, size: 20), SizedBox(width: 12), Text('Set Thumbnail...')])),
+        const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Export...')])),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'open_folder', child: Row(children: [Icon(Icons.folder_open, size: 20), SizedBox(width: 12), Text('Show in folder')])),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 20, color: Colors.red), SizedBox(width: 12), Text('Delete', style: TextStyle(color: Colors.red))])),
+      ],
+    ).then((value) async {
+      if (value == null) return;
+      switch (value) {
+        case 'rename':     await _showRenameDialog(item); break;
+        case 'tags':       await _showTagsForItem(item); break;
+        case 'thumbnail':  await _showThumbnailPicker(item); break;
+        case 'export':     await _exportItem(item); break;
+        case 'open_folder': await _openInFolder(item); break;
+        case 'delete':     await _deleteItem(item); break;
+      }
+    });
+  }
+
+  Future<void> _showRenameDialog(MediaItem item) async {
+    final ctrl = TextEditingController(text: item.originalName);
+    final dotIndex = item.originalName.lastIndexOf('.');
+    if (dotIndex > 0) ctrl.selection = TextSelection(baseOffset: 0, extentOffset: dotIndex);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Rename'),
+        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'New file name', border: OutlineInputBorder(), helperText: 'Tags and metadata will be preserved'), autofocus: true, onSubmitted: (v) => Navigator.pop(dialogCtx, v)),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Rename'))],
+      ),
+    );
+    if (newName == null || newName.trim().isEmpty || newName.trim() == item.originalName) return;
+    final app = context.read<AppState>();
+    final success = await app.items!.renameItem(item, newName.trim());
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success ? 'Renamed' : 'Failed to rename')));
+    if (success) await _runSearch();
+  }
+
+  Future<void> _showTagsForItem(MediaItem item) async {
+    final app = context.read<AppState>();
+    final curSimple = await app.items!.listTagIdsForItem(item.id);
+    final curKv = await app.items!.listKeyValueIdsForItem(item.id);
+    final picked = await showTagManagerDialog(context, initialSimpleTagIds: curSimple, initialKeyValueIds: curKv);
+    if (picked == null) return;
+    await app.setTagsForItem(itemId: item.id, simpleTagIds: picked.simpleTagIds, keyValueIds: picked.keyValueIds);
+    await _runSearch();
+  }
+
+  Future<void> _exportItem(MediaItem item) async {
+    final app = context.read<AppState>();
+    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
+    if (dir == null) return;
+    final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
+    if (!await src.exists()) { if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File not found.'))); return; }
+    await src.copy(_uniquePath(p.join(dir, item.originalName)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File exported.')));
+  }
+
+  Future<void> _deleteItem(MediaItem item) async {
+    final app = context.read<AppState>();
+    if (app.settings.confirmDelete) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Delete item?'),
+          content: const Text('This will delete records and files from /Library/files.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+          ],
+        ),
+      );
+      if (proceed != true) return;
+    }
+    try {
+      final res = await app.deleteOneItem(item);
+      if (!mounted) return;
+      if (res.failed.isNotEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete file.'))); return; }
+      if (_selected?.id == item.id) setState(() => _selected = null);
+      await _runSearch();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Item deleted.')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete error: $e')));
+    }
+  }
+
+  Future<void> _openInFolder(MediaItem item) async {
+    final app = context.read<AppState>();
+    final filePath = LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath);
+    if (Platform.isWindows) { await Process.run('explorer', ['/select,', filePath]); }
+    else if (Platform.isMacOS) { await Process.run('open', ['-R', filePath]); }
+    else if (Platform.isLinux) { await Process.run('xdg-open', [p.dirname(filePath)]); }
+  }
+
+  Future<void> _showThumbnailPicker(MediaItem item) async {
+    // Thumbnail picking requires video frame extraction — not available in search screen
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Set thumbnail via Library screen.')));
+  }
+
   // ── Sort & Filter helpers ───────────────────────────────────────────────
 
   List<MediaItem> _applyFiltersAndSort(List<MediaItem> items) {
@@ -286,6 +404,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                     showUntaggedIndicator: app.settings.showUntaggedIndicator,
                                     untaggedIds: _untaggedIds,
                                     onSelect: (item) => setState(() => _selected = item),
+                                    onContextMenu: (gridCtx, item, pos) => _handleContextMenu(gridCtx, item, pos),
                                   ),
                           ),
                           // ─── Sort / Filter bottom bar ───────────────────
@@ -396,6 +515,7 @@ class _ItemsGrid extends StatelessWidget {
   final bool showUntaggedIndicator;
   final Set<String> untaggedIds;
   final void Function(MediaItem item) onSelect;
+  final void Function(BuildContext ctx, MediaItem item, Offset pos) onContextMenu;
 
   const _ItemsGrid({
     required this.items,
@@ -407,6 +527,7 @@ class _ItemsGrid extends StatelessWidget {
     this.showUntaggedIndicator = true,
     this.untaggedIds = const {},
     required this.onSelect,
+    required this.onContextMenu,
   });
 
   @override
@@ -473,6 +594,7 @@ class _ItemsGrid extends StatelessWidget {
 
         return InkWell(
           onTap: () => onSelect(it),
+          onSecondaryTapDown: (details) => onContextMenu(ctx, it, details.globalPosition),
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
