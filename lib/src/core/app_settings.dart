@@ -14,6 +14,8 @@ class AppSettings {
   final ThemeMode themeMode;
   final bool videoAutostartInPanel;
   final bool startMuted;
+  final int tagDialogSimpleCols;
+  final int tagDialogCustomCols;
 
   const AppSettings({
     required this.importMode,
@@ -24,6 +26,8 @@ class AppSettings {
     required this.themeMode,
     this.videoAutostartInPanel = false,
     this.startMuted = false,
+  this.tagDialogSimpleCols = 6,
+  this.tagDialogCustomCols = 4,
   });
 
   AppSettings copyWith({
@@ -35,6 +39,8 @@ class AppSettings {
     ThemeMode? themeMode,
     bool? videoAutostartInPanel,
     bool? startMuted,
+    int? tagDialogSimpleCols,
+    int? tagDialogCustomCols,
   }) {
     return AppSettings(
       importMode: importMode ?? this.importMode,
@@ -45,6 +51,8 @@ class AppSettings {
       themeMode: themeMode ?? this.themeMode,
       videoAutostartInPanel: videoAutostartInPanel ?? this.videoAutostartInPanel,
       startMuted: startMuted ?? this.startMuted,
+      tagDialogSimpleCols: tagDialogSimpleCols ?? this.tagDialogSimpleCols,
+      tagDialogCustomCols: tagDialogCustomCols ?? this.tagDialogCustomCols,
     );
   }
 
@@ -57,6 +65,8 @@ class AppSettings {
         'themeMode': themeMode.name,
         'videoAutostartInPanel': videoAutostartInPanel,
         'startMuted': startMuted,
+        'tagDialogSimpleCols': tagDialogSimpleCols,
+        'tagDialogCustomCols': tagDialogCustomCols,
       };
 
   static AppSettings fromJson(Map<String, Object?> json) {
@@ -76,6 +86,8 @@ class AppSettings {
     );
     final videoAutostart = (json['videoAutostartInPanel'] as bool?) ?? false;
     final startMuted = (json['startMuted'] as bool?) ?? false;
+    final simpleCols = (json['tagDialogSimpleCols'] as int?) ?? 6;
+    final customCols = (json['tagDialogCustomCols'] as int?) ?? 4;
     return AppSettings(
       importMode: mode,
       confirmDelete: confirm,
@@ -85,6 +97,8 @@ class AppSettings {
       themeMode: themeMode,
       videoAutostartInPanel: videoAutostart,
       startMuted: startMuted,
+      tagDialogSimpleCols: simpleCols,
+      tagDialogCustomCols: customCols,
     );
   }
 
@@ -97,6 +111,8 @@ class AppSettings {
     themeMode: ThemeMode.system,
     videoAutostartInPanel: false,
     startMuted: false,
+    tagDialogSimpleCols: 6,
+    tagDialogCustomCols: 4,
   );
 
   static Future<AppSettings> load(File settingsFile) async {

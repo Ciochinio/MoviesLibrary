@@ -635,6 +635,12 @@ Future<void> setStartMuted(bool value) async {
   notifyListeners();
 }
 
+Future<void> updateSettings(AppSettings newSettings) async {
+  settings = newSettings;
+  await AppSettings.save(paths!.settingsFile, settings);
+  notifyListeners();
+}
+
   Future<void> toggleFavourite(String itemId, bool value) async {
     if (!isReady) return;
     await items!.toggleFavourite(itemId, value);

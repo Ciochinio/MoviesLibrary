@@ -197,6 +197,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
+          // ─── Tag dialog layout ───
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Tag Dialog Layout', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const SizedBox(width: 4),
+                      const Expanded(child: Text('Simple tags — chips per row', style: TextStyle(fontSize: 13))),
+                      Text('${app.settings.tagDialogSimpleCols}', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 8),
+                    ],
+                  ),
+                  Slider(
+                    value: app.settings.tagDialogSimpleCols.toDouble(),
+                    min: 3, max: 10, divisions: 7,
+                    label: '${app.settings.tagDialogSimpleCols}',
+                    onChanged: (v) => context.read<AppState>().updateSettings(
+                      app.settings.copyWith(tagDialogSimpleCols: v.round()),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const SizedBox(width: 4),
+                      const Expanded(child: Text('Custom tags — chips per row', style: TextStyle(fontSize: 13))),
+                      Text('${app.settings.tagDialogCustomCols}', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 8),
+                    ],
+                  ),
+                  Slider(
+                    value: app.settings.tagDialogCustomCols.toDouble(),
+                    min: 2, max: 8, divisions: 6,
+                    label: '${app.settings.tagDialogCustomCols}',
+                    onChanged: (v) => context.read<AppState>().updateSettings(
+                      app.settings.copyWith(tagDialogCustomCols: v.round()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
           // ─── Library path ───
           Card(
             child: ListTile(
