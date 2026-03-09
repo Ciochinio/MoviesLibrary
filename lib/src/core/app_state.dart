@@ -47,6 +47,7 @@ class AppState extends ChangeNotifier {
   List<Tag> _tagList = [];
   List<TagGroup> _tagGroupList = [];
   List<TagKey> _tagKeyList = [];
+  List<NameOrderEntry> _nameOrderList = [];
   final Map<String, List<TagKeyValue>> _tagValuesByKey = {};
 
   String? stashCategoryId;
@@ -59,6 +60,7 @@ class AppState extends ChangeNotifier {
   List<Tag> get tagList => _tagList;
   List<TagGroup> get tagGroupList => _tagGroupList;
   List<TagKey> get tagKeyList => _tagKeyList;
+  List<NameOrderEntry> get nameOrderList => _nameOrderList;
   List<TagKeyValue> valuesForKey(String keyId) => _tagValuesByKey[keyId] ?? const [];
 
   Future<void> bootstrap() async {
@@ -136,6 +138,24 @@ class AppState extends ChangeNotifier {
       '-' +
       (DateTime.now().millisecondsSinceEpoch % 1000).toString();
 
+  Future<String> suggestName(String itemId, String originalName) async {
+    if (tags == null || items == null) return originalName;
+    return items!.suggestNameForItem(
+      itemId,
+      originalName,
+      tagRepo: tags!,
+      allGroups: _tagGroupList,
+      allKeys: _tagKeyList,
+      allTags: _tagList,
+    );
+  }
+
+  Future<void> saveNameOrder(List<NameOrderEntry> entries) async {
+    if (tags == null) return;
+    await tags!.saveNameOrder(entries);
+    await refreshAll();
+  }
+
   Future<void> refreshAll() async {
     if (!isReady) return;
     _categoryList = await categories!.listCategories();
@@ -147,6 +167,10 @@ class AppState extends ChangeNotifier {
     _tagGroupList = await tags!.listTagGroups();
 
     _tagKeyList = await tags!.listTagKeys();
+    _nameOrderList = await tags!.listNameOrder(
+      allGroups: _tagGroupList,
+      allKeys: _tagKeyList,
+    );
     _tagValuesByKey.clear();
     for (final k in _tagKeyList) {
       _tagValuesByKey[k.id] = await tags!.listValuesForKey(k.id);

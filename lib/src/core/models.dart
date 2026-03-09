@@ -77,18 +77,22 @@ class Tag {
   Tag({required this.id, required this.name, this.description = '', this.sortOrder = 0, this.groupId});
 }
 
+enum TagKeyType { chips, search }
+
 class TagKey {
   final String id;
   final String key;
   final DateTime createdAt;
   final String description;
   final int sortOrder;
+  final TagKeyType keyType;
   TagKey({
     required this.id,
     required this.key,
     required this.createdAt,
     this.description = '',
     this.sortOrder = 0,
+    this.keyType = TagKeyType.chips,
   });
 }
 
@@ -109,6 +113,15 @@ class TagKeyValue {
   });
 }
 
+
+enum NameOrderEntryType { tagGroup, tagKey }
+
+class NameOrderEntry {
+  final String id;          // UUID of the group or key
+  final NameOrderEntryType type;
+  final int sortOrder;
+  NameOrderEntry({required this.id, required this.type, required this.sortOrder});
+}
 class Note {
   final String id;
   final String title;

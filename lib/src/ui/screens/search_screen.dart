@@ -186,19 +186,55 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _showRenameDialog(MediaItem item) async {
+    final app = context.read<AppState>();
     final ctrl = TextEditingController(text: item.originalName);
     final dotIndex = item.originalName.lastIndexOf('.');
     if (dotIndex > 0) ctrl.selection = TextSelection(baseOffset: 0, extentOffset: dotIndex);
     final newName = await showDialog<String>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('Rename'),
-        content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'New file name', border: OutlineInputBorder(), helperText: 'Tags and metadata will be preserved'), autofocus: true, onSubmitted: (v) => Navigator.pop(dialogCtx, v)),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Rename'))],
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setState) => AlertDialog(
+          title: const Text('Rename'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                decoration: const InputDecoration(
+                  labelText: 'New file name',
+                  border: OutlineInputBorder(),
+                  helperText: 'Tags and metadata will be preserved',
+                ),
+                autofocus: true,
+                onSubmitted: (v) => Navigator.pop(dialogCtx, v),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  icon: const Icon(Icons.auto_awesome, size: 16),
+                  label: const Text('Suggest from tags'),
+                  onPressed: () async {
+                    final suggested = await app.suggestName(item.id, item.originalName);
+                    ctrl.text = suggested;
+                    final dot = suggested.lastIndexOf('.');
+                    ctrl.selection = TextSelection(
+                      baseOffset: 0,
+                      extentOffset: dot > 0 ? dot : suggested.length,
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogCtx, ctrl.text), child: const Text('Rename')),
+          ],
+        ),
       ),
     );
     if (newName == null || newName.trim().isEmpty || newName.trim() == item.originalName) return;
-    final app = context.read<AppState>();
     final success = await app.items!.renameItem(item, newName.trim());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success ? 'Renamed' : 'Failed to rename')));

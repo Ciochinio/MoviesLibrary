@@ -38,18 +38,14 @@ class TagPickerBody extends StatelessWidget {
             children: [
               Text('Simple Tags', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
-              Expanded(
-                child: allTags.isEmpty
+              allTags.isEmpty
                     ? const Text('No tags. Create them in the Tags tab.')
-                    : SingleChildScrollView(
-                        child: _GroupedSimpleTagPicker(
+                    : _GroupedSimpleTagPicker(
                           groups: groups,
                           allTags: allTags,
                           selected: simpleSelected,
                           onChanged: onSimpleChanged,
-                        ),
                       ),
-              ),
             ],
           ),
         ),
@@ -61,34 +57,64 @@ class TagPickerBody extends StatelessWidget {
             children: [
               Text('Custom Tags', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
-              Expanded(
-                child: keys.isEmpty
+              keys.isEmpty
                     ? const Text('No custom tags. Create them in the Tags tab.')
-                    : SingleChildScrollView(
-                        child: Column(
+                    : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             for (final k in keys) ...[
                               Padding(
-                                padding: const EdgeInsets.only(top: 8, bottom: 4),
-                                child: Text(
-                                  k.key,
-                                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                padding: const EdgeInsets.only(top: 6, bottom: 2),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      k.key,
+                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (k.keyType == TagKeyType.search) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          border: Border.all(color: Theme.of(context).colorScheme.outline),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          'search',
+                                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                            color: Theme.of(context).colorScheme.outline,
+                                            fontSize: 9,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
-                              _SinglePickKeyValues(
-                                keyId: k.id,
-                                values: app.valuesForKey(k.id),
-                                kvSelected: kvSelected,
-                                onKvChanged: onKvChanged,
-                              ),
+                              if (k.keyType == TagKeyType.search)
+                                _SearchKeyPicker(
+                                  tagKey: k,
+                                  allValues: app.valuesForKey(k.id),
+                                  kvSelected: kvSelected,
+                                  onKvChanged: onKvChanged,
+                                  onCreateValue: (keyId, value) async {
+                                    final a = context.read<AppState>();
+                                    await a.tags!.createValue(keyId, value);
+                                    await a.refreshAll();
+                                  },
+                                )
+                              else
+                                _SinglePickKeyValues(
+                                  keyId: k.id,
+                                  values: app.valuesForKey(k.id),
+                                  kvSelected: kvSelected,
+                                  onKvChanged: onKvChanged,
+                                ),
                             ],
                           ],
-                        ),
                       ),
-              ),
             ],
           ),
         ),
@@ -124,22 +150,25 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
       if (groupTags.isEmpty) continue;
 
       children.add(Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        padding: const EdgeInsets.only(top: 6, bottom: 2),
         child: Text(
           g.name,
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
       ));
       children.add(Wrap(
-        spacing: 6,
-        runSpacing: 6,
+        spacing: 4,
+        runSpacing: 2,
         children: [
           for (final t in groupTags)
             FilterChip(
-              label: Text(t.name),
+              label: Text(t.name, style: const TextStyle(fontSize: 11)),
               tooltip: t.description.isNotEmpty ? t.description : null,
               selected: selected.contains(t.id),
               showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               onSelected: (v) => onChanged(t.id, v),
             ),
         ],
@@ -149,23 +178,26 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
     if (ungrouped.isNotEmpty) {
       if (hasAnyGroupedTags) {
         children.add(Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          padding: const EdgeInsets.only(top: 6, bottom: 2),
           child: Text(
             'Other',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold),
           ),
         ));
       }
       children.add(Wrap(
-        spacing: 6,
-        runSpacing: 6,
+        spacing: 4,
+        runSpacing: 2,
         children: [
           for (final t in ungrouped)
             FilterChip(
-              label: Text(t.name),
+              label: Text(t.name, style: const TextStyle(fontSize: 11)),
               tooltip: t.description.isNotEmpty ? t.description : null,
               selected: selected.contains(t.id),
               showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               onSelected: (v) => onChanged(t.id, v),
             ),
         ],
@@ -201,9 +233,12 @@ class _SinglePickKeyValues extends StatelessWidget {
       children: [
         for (final v in values)
           FilterChip(
-            label: Text(v.value),
+            label: Text(v.value, style: const TextStyle(fontSize: 11)),
             selected: kvSelected.contains(v.id),
             showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
             onSelected: (sel) {
               if (sel) {
                 for (final other in values) {
@@ -220,64 +255,185 @@ class _SinglePickKeyValues extends StatelessWidget {
   }
 }
 
-/// Calculates the appropriate dialog size based on tag/group content.
-/// Grows to fit content, clamped between min and 85% of screen height.
-Size _calculateDialogSize(BuildContext context, AppState app) {
-  const double chipHeight = 36;
-  const double chipSpacing = 6;
-  const double groupHeaderHeight = 28;
-  const double sectionTitleHeight = 32;
-  const double padding = 48;
-  const double minWidth = 600;
-  const double maxWidth = 900;
-  const double minHeight = 300;
+/// Searchable multi-pick picker for a search-type key.
+// Sentinel value used to represent the "Create new" option in the Autocomplete list.
+const _kCreateSentinel = '__create__';
 
-  final screenHeight = MediaQuery.of(context).size.height;
-  final maxHeight = screenHeight * 0.85;
+class _SearchKeyPicker extends StatefulWidget {
+  final TagKey tagKey;
+  final List<TagKeyValue> allValues;
+  final Set<String> kvSelected;
+  final void Function(String id, bool selected) onKvChanged;
+  final Future<void> Function(String keyId, String value) onCreateValue;
 
-  // ── Left column: simple tags ──
-  double leftHeight = sectionTitleHeight;
-  final groups = app.tagGroupList;
-  final allTags = app.tagList;
+  const _SearchKeyPicker({
+    required this.tagKey,
+    required this.allValues,
+    required this.kvSelected,
+    required this.onKvChanged,
+    required this.onCreateValue,
+  });
 
-  for (final g in groups) {
-    final groupTags = allTags.where((t) => t.groupId == g.id).toList();
-    if (groupTags.isEmpty) continue;
-    leftHeight += groupHeaderHeight;
-    // Estimate chip rows (assume ~3 chips per row on average)
-    final rows = (groupTags.length / 3).ceil();
-    leftHeight += rows * (chipHeight + chipSpacing);
-    leftHeight += 8; // spacing between groups
+  @override
+  State<_SearchKeyPicker> createState() => _SearchKeyPickerState();
+}
+
+class _SearchKeyPickerState extends State<_SearchKeyPicker> {
+  String _query = '';
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
-  final ungrouped = allTags.where((t) => t.groupId == null).toList();
-  if (ungrouped.isNotEmpty) {
-    if (groups.isNotEmpty) leftHeight += groupHeaderHeight;
-    final rows = (ungrouped.length / 3).ceil();
-    leftHeight += rows * (chipHeight + chipSpacing);
+  bool get _hasExactMatch => widget.allValues
+      .any((v) => v.value.toLowerCase() == _query.toLowerCase().trim());
+
+  // Returns option strings for Autocomplete: matching unselected values + optional sentinel.
+  Iterable<String> _optionsFor(TextEditingValue tv) {
+    final q = tv.text.trim().toLowerCase();
+    if (q.isEmpty) return [];
+    final matches = widget.allValues
+        .where((v) => !widget.kvSelected.contains(v.id))
+        .where((v) => v.value.toLowerCase().contains(q))
+        .map((v) => v.value)
+        .take(8)
+        .toList();
+    final exact = widget.allValues.any((v) => v.value.toLowerCase() == q);
+    if (!exact) matches.add(_kCreateSentinel);
+    return matches;
   }
 
-  // ── Right column: custom tags ──
-  double rightHeight = sectionTitleHeight;
-  for (final k in app.tagKeyList) {
-    rightHeight += groupHeaderHeight;
-    final values = app.valuesForKey(k.id);
-    final rows = (values.length / 3).ceil().clamp(1, 100);
-    rightHeight += rows * (chipHeight + chipSpacing) + 8;
+  Future<void> _onSelected(String option) async {
+    if (option == _kCreateSentinel) {
+      final val = _query.trim();
+      if (val.isEmpty) return;
+      await widget.onCreateValue(widget.tagKey.id, val);
+      // allValues will update via refreshAll → setState from parent
+    } else {
+      final match = widget.allValues.firstWhere((v) => v.value == option);
+      widget.onKvChanged(match.id, true);
+    }
+    setState(() => _query = '');
   }
 
-  final contentHeight = [leftHeight, rightHeight].reduce((a, b) => a > b ? a : b);
-  final dialogHeight = (contentHeight + padding).clamp(minHeight, maxHeight);
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.allValues
+        .where((v) => widget.kvSelected.contains(v.id))
+        .toList();
 
-  // Width grows slightly if there are many groups/keys
-  final totalSections = groups.length + app.tagKeyList.length;
-  final dialogWidth = totalSections > 8
-      ? maxWidth
-      : totalSections > 4
-          ? 760.0
-          : minWidth;
-
-  return Size(dialogWidth, dialogHeight);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Autocomplete<String>(
+          optionsBuilder: _optionsFor,
+          onSelected: _onSelected,
+          fieldViewBuilder: (ctx, ctrl, focusNode, onSubmit) {
+            return TextFormField(
+              controller: ctrl,
+              focusNode: focusNode,
+              style: const TextStyle(fontSize: 12),
+              decoration: InputDecoration(
+                hintText: 'Search or add...',
+                hintStyle: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.search, size: 16),
+                prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            );
+          },
+          optionsViewBuilder: (ctx, onSelected, options) {
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(6),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 160, maxWidth: 300),
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    children: options.map((option) {
+                      if (option == _kCreateSentinel) {
+                        return InkWell(
+                          onTap: () => onSelected(option),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                            child: Row(
+                              children: [
+                                Icon(Icons.add, size: 14, color: Theme.of(ctx).colorScheme.primary),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Create "${_query.trim()}"',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontStyle: FontStyle.italic,
+                                    color: Theme.of(ctx).colorScheme.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                      // Highlight matching portion
+                      final q = _query.toLowerCase();
+                      final lower = option.toLowerCase();
+                      final idx = lower.indexOf(q);
+                      return InkWell(
+                        onTap: () => onSelected(option),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                          child: idx == -1
+                              ? Text(option, style: const TextStyle(fontSize: 12))
+                              : RichText(
+                                  text: TextSpan(
+                                    style: TextStyle(fontSize: 12, color: Theme.of(ctx).textTheme.bodyMedium?.color),
+                                    children: [
+                                      TextSpan(text: option.substring(0, idx)),
+                                      TextSpan(
+                                        text: option.substring(idx, idx + q.length),
+                                        style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(ctx).colorScheme.primary),
+                                      ),
+                                      TextSpan(text: option.substring(idx + q.length)),
+                                    ],
+                                  ),
+                                ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        if (selected.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 2,
+              children: [
+                for (final v in selected)
+                  Chip(
+                    label: Text(v.value, style: const TextStyle(fontSize: 11)),
+                    deleteIcon: const Icon(Icons.close, size: 12),
+                    onDeleted: () => widget.onKvChanged(v.id, false),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 /// Dialog to manage both kinds of tags for a single item.
@@ -294,15 +450,19 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
     builder: (ctx) {
       return StatefulBuilder(
         builder: (ctx, setState) {
-          final app = ctx.watch<AppState>();
-          final size = _calculateDialogSize(ctx, app);
+          ctx.watch<AppState>(); // rebuild on tag changes
 
           return AlertDialog(
             title: const Text('Tags'),
-            content: SizedBox(
-              width: size.width,
-              height: size.height,
-              child: TagPickerBody(
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: 600,
+                maxWidth: 900,
+                maxHeight: MediaQuery.of(ctx).size.height * 0.82,
+              ),
+              child: IntrinsicHeight(
+                child: SingleChildScrollView(
+                  child: TagPickerBody(
                 simpleSelected: simpleSelected,
                 kvSelected: kvSelected,
                 onSimpleChanged: (id, v) => setState(() {
@@ -311,6 +471,8 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
                 onKvChanged: (id, v) => setState(() {
                   if (v) { kvSelected.add(id); } else { kvSelected.remove(id); }
                 }),
+              ),
+                ),
               ),
             ),
             actions: [

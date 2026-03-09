@@ -338,11 +338,12 @@ Future<List<Tag>> listTags() async {
               createdAt: DateTime.fromMillisecondsSinceEpoch(r['created_at'] as int),
               description: (r['description'] as String?) ?? '',
               sortOrder: (r['sort_order'] as int?) ?? 0,
+              keyType: (r['type'] as String?) == 'search' ? TagKeyType.search : TagKeyType.chips,
             ))
         .toList();
   }
 
-  Future<TagKey> createTagKey(String key, {String description = ''}) async {
+  Future<TagKey> createTagKey(String key, {String description = '', TagKeyType keyType = TagKeyType.chips}) async {
     final id = _uuid.v4();
     final now = DateTime.now().millisecondsSinceEpoch;
     // Get max sort_order and add 1
@@ -356,6 +357,7 @@ Future<List<Tag>> listTags() async {
       'created_at': now,
       'description': description,
       'sort_order': sortOrder,
+      'type': keyType == TagKeyType.search ? 'search' : 'chips',
     });
     return TagKey(
       id: id,
@@ -363,6 +365,7 @@ Future<List<Tag>> listTags() async {
       createdAt: DateTime.fromMillisecondsSinceEpoch(now),
       description: description,
       sortOrder: sortOrder,
+      keyType: keyType,
     );
   }
 
@@ -560,6 +563,54 @@ Future<void> setTagGroup(String tagId, String? groupId) async {
   }
 
   /// Returns the key_id for a given key_value id, or null if not found.
+
+  // ─── Name Order ──────────────────────────────────────────────────────────
+
+  /// Returns the unified name order list (tag groups + tag keys interleaved).
+  /// Entries not yet in name_order are appended at the end.
+  Future<List<NameOrderEntry>> listNameOrder({
+    required List<TagGroup> allGroups,
+    required List<TagKey> allKeys,
+  }) async {
+    final rows = await db.query('name_order', orderBy: 'sort_order ASC');
+    final entries = rows.map((r) => NameOrderEntry(
+      id: r['id'] as String,
+      type: (r['type'] as String) == 'tag_group' ? NameOrderEntryType.tagGroup : NameOrderEntryType.tagKey,
+      sortOrder: r['sort_order'] as int,
+    )).toList();
+
+    // Collect IDs already in name_order
+    final ordered = <NameOrderEntry>[...entries];
+    final seenIds = entries.map((e) => e.id).toSet();
+
+    // Append any groups/keys not yet in the table (new ones fall to the bottom)
+    int next = (entries.isNotEmpty ? entries.last.sortOrder : 0) + 1;
+    for (final g in allGroups) {
+      if (!seenIds.contains(g.id)) {
+        ordered.add(NameOrderEntry(id: g.id, type: NameOrderEntryType.tagGroup, sortOrder: next++));
+      }
+    }
+    for (final k in allKeys) {
+      if (!seenIds.contains(k.id)) {
+        ordered.add(NameOrderEntry(id: k.id, type: NameOrderEntryType.tagKey, sortOrder: next++));
+      }
+    }
+    return ordered;
+  }
+
+  Future<void> saveNameOrder(List<NameOrderEntry> entries) async {
+    final batch = db.batch();
+    batch.delete('name_order');
+    for (int i = 0; i < entries.length; i++) {
+      batch.insert('name_order', {
+        'id': entries[i].id,
+        'type': entries[i].type == NameOrderEntryType.tagGroup ? 'tag_group' : 'tag_key',
+        'sort_order': i,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
   Future<String?> getKeyIdForValue(String keyValueId) async {
     final rows = await db.query('tag_key_values', columns: ['key_id'], where: 'id=?', whereArgs: [keyValueId], limit: 1);
     if (rows.isEmpty) return null;
@@ -737,6 +788,49 @@ Future<List<MediaItem>> listItemsByTagsGlobal({required List<String> tagIds}) as
       ORDER BY t.name COLLATE NOCASE
     ''', [itemId]);
     return rows.map((r) => Tag(id: r['id'] as String, name: r['name'] as String)).toList();
+  }
+
+  /// Builds a suggested filename from item tags following name_order.
+  Future<String> suggestNameForItem(
+    String itemId,
+    String originalName, {
+    required TagRepo tagRepo,
+    required List<TagGroup> allGroups,
+    required List<TagKey> allKeys,
+    required List<Tag> allTags,
+  }) async {
+    final order = await tagRepo.listNameOrder(allGroups: allGroups, allKeys: allKeys);
+    final simpleTagIds = await listTagIdsForItem(itemId);
+    final kvValues = await listKeyValuesForItem(itemId);
+    final kvByKeyId = <String, List<TagKeyValue>>{};
+    for (final kv in kvValues) {
+      kvByKeyId.putIfAbsent(kv.keyId, () => []).add(kv);
+    }
+
+    final parts = <String>[];
+    for (final entry in order) {
+      if (entry.type == NameOrderEntryType.tagGroup) {
+        final groupTags = allTags
+            .where((t) => t.groupId == entry.id && simpleTagIds.contains(t.id))
+            .toList()
+          ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+        parts.addAll(groupTags.map((t) => t.name));
+      } else {
+        final vals = kvByKeyId[entry.id] ?? [];
+        parts.addAll(vals.map((v) => v.value));
+      }
+    }
+
+    // Ungrouped simple tags appended at the end
+    final ungroupedTags = allTags
+        .where((t) => t.groupId == null && simpleTagIds.contains(t.id))
+        .toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    parts.addAll(ungroupedTags.map((t) => t.name));
+
+    if (parts.isEmpty) return originalName;
+    final ext = originalName.contains('.') ? originalName.substring(originalName.lastIndexOf('.')) : '';
+    return parts.join(' ') + ext;
   }
 
   Future<Set<String>> listTagIdsForItem(String itemId) async {

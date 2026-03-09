@@ -10,7 +10,7 @@ class TagsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -27,6 +27,7 @@ class TagsScreen extends StatelessWidget {
               tabs: [
                 Tab(text: 'Tags'),
                 Tab(text: 'Custom Tags'),
+                Tab(text: 'Name Order'),
               ],
             ),
             const SizedBox(height: 12),
@@ -35,6 +36,7 @@ class TagsScreen extends StatelessWidget {
                 children: [
                   _SimpleTagsTab(),
                   _KeyValueTagsTab(),
+                  _NameOrderTab(),
                 ],
               ),
             ),
@@ -432,6 +434,85 @@ class _UngroupedTile extends StatelessWidget {
   }
 }
 
+
+// ── New key dialog with type selection ───────────────────────────────────────
+Future<({String name, String description, TagKeyType keyType})?> _promptNewKey(BuildContext context) async {
+  final nameCtrl = TextEditingController();
+  final descCtrl = TextEditingController();
+  TagKeyType selectedType = TagKeyType.chips;
+
+  return showDialog<({String name, String description, TagKeyType keyType})>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: const Text('New custom tag key'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 16),
+            Text('Type', style: ctx.findAncestorWidgetOfExactType<AlertDialog>() != null
+                ? Theme.of(ctx).textTheme.labelLarge
+                : Theme.of(ctx).textTheme.labelLarge),
+            const SizedBox(height: 8),
+            SegmentedButton<TagKeyType>(
+              segments: const [
+                ButtonSegment(
+                  value: TagKeyType.chips,
+                  icon: Icon(Icons.grid_view, size: 16),
+                  label: Text('Chips'),
+                ),
+                ButtonSegment(
+                  value: TagKeyType.search,
+                  icon: Icon(Icons.search, size: 16),
+                  label: Text('Searchable'),
+                ),
+              ],
+              selected: {selectedType},
+              onSelectionChanged: (v) => setState(() => selectedType = v.first),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              selectedType == TagKeyType.chips
+                  ? 'Predefined values shown as chips. Single pick.'
+                  : 'Type to search or create values. Multi-pick.',
+              style: Theme.of(ctx).textTheme.bodySmall?.copyWith(color: Theme.of(ctx).hintColor),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, (
+              name: nameCtrl.text,
+              description: descCtrl.text,
+              keyType: selectedType,
+            )),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 // ──────────────────────────────────────────────
 // Custom Tags (Key:Value) Tab
 // ──────────────────────────────────────────────
@@ -454,10 +535,14 @@ class _KeyValueTagsTab extends StatelessWidget {
             const Spacer(),
             FilledButton.icon(
               onPressed: () async {
-                final result = await TagsScreen._promptWithDescription(context, 'New key');
+                final result = await _promptNewKey(context);
                 if (result == null || result.name.trim().isEmpty) return;
                 final a = context.read<AppState>();
-                await a.tags!.createTagKey(result.name.trim(), description: result.description);
+                await a.tags!.createTagKey(
+                  result.name.trim(),
+                  description: result.description,
+                  keyType: result.keyType,
+                );
                 await a.refreshAll();
               },
               icon: const Icon(Icons.add),
@@ -649,6 +734,98 @@ class _KeyValueTagsTab extends StatelessWidget {
             await a.tags!.createValue(k.id, result.name.trim(), description: result.description);
             await a.refreshAll();
           },
+        ),
+      ],
+    );
+  }
+}
+
+// ──────────────────────────────────────────────
+// Name Order Tab
+// ──────────────────────────────────────────────
+
+class _NameOrderTab extends StatelessWidget {
+  const _NameOrderTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final order = app.nameOrderList;
+    final groups = { for (final g in app.tagGroupList) g.id: g };
+    final keys = { for (final k in app.tagKeyList) k.id: k };
+
+    String labelFor(NameOrderEntry e) {
+      if (e.type == NameOrderEntryType.tagGroup) {
+        return groups[e.id]?.name ?? '(deleted group)';
+      } else {
+        return keys[e.id]?.key ?? '(deleted key)';
+      }
+    }
+
+    IconData iconFor(NameOrderEntry e) =>
+        e.type == NameOrderEntryType.tagGroup ? Icons.label_outline : Icons.tune;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Drag to set the order tags appear in suggested filenames.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+          ),
+        ),
+        Expanded(
+          child: order.isEmpty
+              ? const Center(child: Text('No tag groups or custom keys yet.'))
+              : ReorderableListView(
+                  onReorder: (oldIndex, newIndex) async {
+                    if (newIndex > oldIndex) newIndex--;
+                    final updated = [...order];
+                    final item = updated.removeAt(oldIndex);
+                    updated.insert(newIndex, item);
+                    await context.read<AppState>().saveNameOrder(updated);
+                  },
+                  children: [
+                    for (int i = 0; i < order.length; i++)
+                      ListTile(
+                        key: ValueKey(order[i].id),
+                        leading: Icon(iconFor(order[i]), size: 18),
+                        title: Text(labelFor(order[i])),
+                        subtitle: Text(
+                          order[i].type == NameOrderEntryType.tagGroup ? 'Simple tag group' : 'Custom tag key',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.arrow_upward, size: 18),
+                              onPressed: i == 0 ? null : () async {
+                                final updated = [...order];
+                                final item = updated.removeAt(i);
+                                updated.insert(i - 1, item);
+                                await context.read<AppState>().saveNameOrder(updated);
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.arrow_downward, size: 18),
+                              onPressed: i == order.length - 1 ? null : () async {
+                                final updated = [...order];
+                                final item = updated.removeAt(i);
+                                updated.insert(i + 1, item);
+                                await context.read<AppState>().saveNameOrder(updated);
+                              },
+                            ),
+                            ReorderableDragStartListener(
+                              index: i,
+                              child: const Icon(Icons.drag_handle),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
         ),
       ],
     );

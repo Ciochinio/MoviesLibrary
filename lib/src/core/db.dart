@@ -11,7 +11,7 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 12,
+        version: 14,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
         },
@@ -30,6 +30,8 @@ class AppDb {
           if (oldVersion < 10) await _upgradeToV10(db);
           if (oldVersion < 11) await _upgradeToV11(db);
           if (oldVersion < 12) await _upgradeToV12(db);
+          if (oldVersion < 13) await _upgradeToV13(db);
+          if (oldVersion < 14) await _upgradeToV14(db);
         },
       ),
     );
@@ -518,5 +520,20 @@ class AppDb {
     ''');
     try { await db.execute('ALTER TABLE tags ADD COLUMN group_id TEXT REFERENCES tag_groups(id) ON DELETE SET NULL'); } catch (_) {}
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tags_group_id ON tags(group_id);');
+  }
+
+  Future<void> _upgradeToV13(Database db) async {
+    try { await db.execute("ALTER TABLE tag_keys ADD COLUMN type TEXT NOT NULL DEFAULT 'chips'"); } catch (_) {}
+  }
+
+  Future<void> _upgradeToV14(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS name_order (
+        id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (id, type)
+      );
+    ''');
   }
 }
