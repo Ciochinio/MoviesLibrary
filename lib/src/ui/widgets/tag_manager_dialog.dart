@@ -28,7 +28,7 @@ class _TagChip extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
           color: selected ? cs.primary : cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(6),
@@ -49,10 +49,12 @@ class _TagChip extends StatelessWidget {
         ),
       ),
     );
-    if (tooltip != null && tooltip!.isNotEmpty) {
-      return Tooltip(message: tooltip!, child: chip);
-    }
-    return chip;
+    final wrapped = tooltip != null && tooltip!.isNotEmpty
+        ? Tooltip(message: tooltip!, child: chip)
+        : chip;
+    // When used standalone (right column), size to content.
+    // When used inside FractionallySizedBox (left column), it fills the box.
+    return wrapped;
   }
 }
 
@@ -80,7 +82,6 @@ class TagPickerBody extends StatelessWidget {
     final allTags = app.tagList;
     final keys = app.tagKeyList;
     final simpleCols = app.settings.tagDialogSimpleCols;
-    final customCols = app.settings.tagDialogCustomCols;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -166,7 +167,6 @@ class TagPickerBody extends StatelessWidget {
                                   values: app.valuesForKey(k.id),
                                   kvSelected: kvSelected,
                                   onKvChanged: onKvChanged,
-                                  cols: customCols,
                                 ),
                             ],
                           ],
@@ -256,43 +256,37 @@ class _SinglePickKeyValues extends StatelessWidget {
   final List<TagKeyValue> values;
   final Set<String> kvSelected;
   final void Function(String id, bool selected) onKvChanged;
-  final int cols;
 
   const _SinglePickKeyValues({
     required this.keyId,
     required this.values,
     required this.kvSelected,
     required this.onKvChanged,
-    required this.cols,
   });
 
   @override
   Widget build(BuildContext context) {
     return Wrap(
-      spacing: 0,
+      spacing: 4,
       runSpacing: 4,
       children: [
         for (final v in values)
-          FractionallySizedBox(
-            widthFactor: 1 / cols,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: _TagChip(
-                label: v.value,
-                selected: kvSelected.contains(v.id),
-                onTap: () {
-                  if (!kvSelected.contains(v.id)) {
-                    for (final other in values) {
-                      if (other.id != v.id && kvSelected.contains(other.id)) {
-                        onKvChanged(other.id, false);
-                      }
+          IntrinsicWidth(
+            child: _TagChip(
+              label: v.value,
+              selected: kvSelected.contains(v.id),
+              onTap: () {
+                if (!kvSelected.contains(v.id)) {
+                  for (final other in values) {
+                    if (other.id != v.id && kvSelected.contains(other.id)) {
+                      onKvChanged(other.id, false);
                     }
-                    onKvChanged(v.id, true);
-                  } else {
-                    onKvChanged(v.id, false);
                   }
-                },
-              ),
+                  onKvChanged(v.id, true);
+                } else {
+                  onKvChanged(v.id, false);
+                }
+              },
             ),
           ),
       ],
