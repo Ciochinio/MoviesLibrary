@@ -205,38 +205,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Tag Dialog Layout', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      const SizedBox(width: 4),
-                      const Expanded(child: Text('Simple tags — chips per row', style: TextStyle(fontSize: 13))),
-                      Text('${app.settings.tagDialogSimpleCols}', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
-                      const SizedBox(width: 8),
-                    ],
-                  ),
-                  Slider(
-                    value: app.settings.tagDialogSimpleCols.toDouble(),
-                    min: 3, max: 10, divisions: 7,
-                    label: '${app.settings.tagDialogSimpleCols}',
+                  const SizedBox(height: 12),
+                  _ColsRow(
+                    label: 'Simple tags — chips per row',
+                    value: app.settings.tagDialogSimpleCols,
+                    min: 3, max: 10,
                     onChanged: (v) => context.read<AppState>().updateSettings(
-                      app.settings.copyWith(tagDialogSimpleCols: v.round()),
+                      app.settings.copyWith(tagDialogSimpleCols: v),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const SizedBox(width: 4),
-                      const Expanded(child: Text('Custom tags — chips per row', style: TextStyle(fontSize: 13))),
-                      Text('${app.settings.tagDialogCustomCols}', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
-                      const SizedBox(width: 8),
-                    ],
-                  ),
-                  Slider(
-                    value: app.settings.tagDialogCustomCols.toDouble(),
-                    min: 2, max: 8, divisions: 6,
-                    label: '${app.settings.tagDialogCustomCols}',
+                  _ColsRow(
+                    label: 'Custom tags — chips per row',
+                    value: app.settings.tagDialogCustomCols,
+                    min: 2, max: 8,
                     onChanged: (v) => context.read<AppState>().updateSettings(
-                      app.settings.copyWith(tagDialogCustomCols: v.round()),
+                      app.settings.copyWith(tagDialogCustomCols: v),
                     ),
                   ),
                 ],
@@ -370,6 +354,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+class _ColsRow extends StatelessWidget {
+  final String label;
+  final int value;
+  final int min;
+  final int max;
+  final void Function(int) onChanged;
+
+  const _ColsRow({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+        IconButton(
+          icon: const Icon(Icons.remove, size: 16),
+          onPressed: value > min ? () => onChanged(value - 1) : null,
+          visualDensity: VisualDensity.compact,
+        ),
+        SizedBox(
+          width: 28,
+          child: Text(
+            '$value',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.add, size: 16),
+          onPressed: value < max ? () => onChanged(value + 1) : null,
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
     );
   }
 }

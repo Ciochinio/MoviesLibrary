@@ -25,10 +25,9 @@ class _TagChip extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final chip = GestureDetector(
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
+      child: Container(
+        height: 28,
         alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
           color: selected ? cs.primary : cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(6),
@@ -44,17 +43,15 @@ class _TagChip extends StatelessWidget {
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
           ),
           textAlign: TextAlign.center,
-          overflow: TextOverflow.visible,
-          softWrap: true,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
         ),
       ),
     );
-    final wrapped = tooltip != null && tooltip!.isNotEmpty
-        ? Tooltip(message: tooltip!, child: chip)
-        : chip;
-    // When used standalone (right column), size to content.
-    // When used inside FractionallySizedBox (left column), it fills the box.
-    return wrapped;
+    if (tooltip != null && tooltip!.isNotEmpty) {
+      return Tooltip(message: tooltip!, child: chip);
+    }
+    return chip;
   }
 }
 
@@ -82,6 +79,7 @@ class TagPickerBody extends StatelessWidget {
     final allTags = app.tagList;
     final keys = app.tagKeyList;
     final simpleCols = app.settings.tagDialogSimpleCols;
+    final customCols = app.settings.tagDialogCustomCols;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -93,15 +91,19 @@ class TagPickerBody extends StatelessWidget {
             children: [
               Text('Simple Tags', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
-              allTags.isEmpty
-                    ? const Text('No tags. Create them in the Tags tab.')
-                    : _GroupedSimpleTagPicker(
+              Expanded(
+                child: SingleChildScrollView(
+                  child: allTags.isEmpty
+                      ? const Text('No tags. Create them in the Tags tab.')
+                      : _GroupedSimpleTagPicker(
                           groups: groups,
                           allTags: allTags,
                           selected: simpleSelected,
                           onChanged: onSimpleChanged,
                           cols: simpleCols,
-                      ),
+                        ),
+                ),
+              ),
             ],
           ),
         ),
@@ -113,9 +115,11 @@ class TagPickerBody extends StatelessWidget {
             children: [
               Text('Custom Tags', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
-              keys.isEmpty
-                    ? const Text('No custom tags. Create them in the Tags tab.')
-                    : Column(
+              Expanded(
+                child: SingleChildScrollView(
+                  child: keys.isEmpty
+                      ? const Text('No custom tags. Create them in the Tags tab.')
+                      : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             for (final k in keys) ...[
@@ -167,10 +171,13 @@ class TagPickerBody extends StatelessWidget {
                                   values: app.valuesForKey(k.id),
                                   kvSelected: kvSelected,
                                   onKvChanged: onKvChanged,
+                                  cols: customCols,
                                 ),
                             ],
                           ],
-                      ),
+                        ),
+                ),
+              ),
             ],
           ),
         ),
@@ -200,10 +207,9 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
   Widget build(BuildContext context) {
     final ungrouped = allTags.where((t) => t.groupId == null).toList();
     final hasAnyGroupedTags = groups.any((g) => allTags.any((t) => t.groupId == g.id));
-
     final children = <Widget>[];
 
-    Widget chipGrid(List<Tag> tags) => Wrap(
+    Widget chipRow(List<Tag> tags) => Wrap(
       spacing: 0,
       runSpacing: 4,
       children: [
@@ -230,7 +236,7 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
         padding: const EdgeInsets.only(top: 6, bottom: 2),
         child: Text(g.name, style: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)),
       ));
-      children.add(chipGrid(groupTags));
+      children.add(chipRow(groupTags));
     }
 
     if (ungrouped.isNotEmpty) {
@@ -240,7 +246,7 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
           child: Text('Other', style: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold)),
         ));
       }
-      children.add(chipGrid(ungrouped));
+      children.add(chipRow(ungrouped));
     }
 
     return Column(
@@ -250,43 +256,48 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
   }
 }
 
-/// Single-pick chip group for values within one key.
 class _SinglePickKeyValues extends StatelessWidget {
   final String keyId;
   final List<TagKeyValue> values;
   final Set<String> kvSelected;
   final void Function(String id, bool selected) onKvChanged;
+  final int cols;
 
   const _SinglePickKeyValues({
     required this.keyId,
     required this.values,
     required this.kvSelected,
     required this.onKvChanged,
+    required this.cols,
   });
 
   @override
   Widget build(BuildContext context) {
     return Wrap(
-      spacing: 4,
+      spacing: 0,
       runSpacing: 4,
       children: [
         for (final v in values)
-          IntrinsicWidth(
-            child: _TagChip(
-              label: v.value,
-              selected: kvSelected.contains(v.id),
-              onTap: () {
-                if (!kvSelected.contains(v.id)) {
-                  for (final other in values) {
-                    if (other.id != v.id && kvSelected.contains(other.id)) {
-                      onKvChanged(other.id, false);
+          FractionallySizedBox(
+            widthFactor: 1 / cols,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: _TagChip(
+                label: v.value,
+                selected: kvSelected.contains(v.id),
+                onTap: () {
+                  if (!kvSelected.contains(v.id)) {
+                    for (final other in values) {
+                      if (other.id != v.id && kvSelected.contains(other.id)) {
+                        onKvChanged(other.id, false);
+                      }
                     }
+                    onKvChanged(v.id, true);
+                  } else {
+                    onKvChanged(v.id, false);
                   }
-                  onKvChanged(v.id, true);
-                } else {
-                  onKvChanged(v.id, false);
-                }
-              },
+                },
+              ),
             ),
           ),
       ],
@@ -493,15 +504,10 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
 
           return AlertDialog(
             title: const Text('Tags'),
-            content: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: 600,
-                maxWidth: 900,
-                maxHeight: MediaQuery.of(ctx).size.height * 0.82,
-              ),
-              child: IntrinsicHeight(
-                child: SingleChildScrollView(
-                  child: TagPickerBody(
+            content: SizedBox(
+              width: 900,
+              height: MediaQuery.of(ctx).size.height * 0.75,
+              child: TagPickerBody(
                 simpleSelected: simpleSelected,
                 kvSelected: kvSelected,
                 onSimpleChanged: (id, v) => setState(() {
@@ -510,8 +516,6 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
                 onKvChanged: (id, v) => setState(() {
                   if (v) { kvSelected.add(id); } else { kvSelected.remove(id); }
                 }),
-              ),
-                ),
               ),
             ),
             actions: [
