@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -357,7 +358,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
-class _ColsRow extends StatelessWidget {
+class _ColsRow extends StatefulWidget {
   final String label;
   final int value;
   final int min;
@@ -373,26 +374,65 @@ class _ColsRow extends StatelessWidget {
   });
 
   @override
+  State<_ColsRow> createState() => _ColsRowState();
+}
+
+class _ColsRowState extends State<_ColsRow> {
+  late int _localValue;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _localValue = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(_ColsRow old) {
+    super.didUpdateWidget(old);
+    // Only sync from outside if no pending debounce (user not currently clicking)
+    if (_debounce == null || !_debounce!.isActive) {
+      _localValue = widget.value;
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _tap(int delta) {
+    final next = (_localValue + delta).clamp(widget.min, widget.max);
+    if (next == _localValue) return;
+    setState(() => _localValue = next);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      widget.onChanged(_localValue);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+        Expanded(child: Text(widget.label, style: const TextStyle(fontSize: 13))),
         IconButton(
           icon: const Icon(Icons.remove, size: 16),
-          onPressed: value > min ? () => onChanged(value - 1) : null,
+          onPressed: _localValue > widget.min ? () => _tap(-1) : null,
           visualDensity: VisualDensity.compact,
         ),
         SizedBox(
           width: 28,
           child: Text(
-            '$value',
+            '$_localValue',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
         ),
         IconButton(
           icon: const Icon(Icons.add, size: 16),
-          onPressed: value < max ? () => onChanged(value + 1) : null,
+          onPressed: _localValue < widget.max ? () => _tap(1) : null,
           visualDensity: VisualDensity.compact,
         ),
       ],

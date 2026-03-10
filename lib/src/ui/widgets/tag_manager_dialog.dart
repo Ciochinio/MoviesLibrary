@@ -86,6 +86,7 @@ class TagPickerBody extends StatelessWidget {
       children: [
         // ─── Left: Simple Tags (grouped) ───
         Expanded(
+          flex: simpleCols,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -110,6 +111,7 @@ class TagPickerBody extends StatelessWidget {
         const VerticalDivider(width: 24),
         // ─── Right: Custom Tags (key:value) — single pick per key ───
         Expanded(
+          flex: customCols,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -221,7 +223,7 @@ class _GroupedSimpleTagPicker extends StatelessWidget {
               child: _TagChip(
                 label: t.name,
                 selected: selected.contains(t.id),
-                tooltip: t.description.isNotEmpty ? t.description : null,
+                tooltip: t.description.isNotEmpty ? '${t.name}: ${t.description}' : t.name,
                 onTap: () => onChanged(t.id, !selected.contains(t.id)),
               ),
             ),
@@ -285,6 +287,7 @@ class _SinglePickKeyValues extends StatelessWidget {
               child: _TagChip(
                 label: v.value,
                 selected: kvSelected.contains(v.id),
+                tooltip: v.value,
                 onTap: () {
                   if (!kvSelected.contains(v.id)) {
                     for (final other in values) {
@@ -504,10 +507,15 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
 
           return AlertDialog(
             title: const Text('Tags'),
-            content: SizedBox(
-              width: 900,
-              height: MediaQuery.of(ctx).size.height * 0.75,
-              child: TagPickerBody(
+            content: Builder(
+              builder: (context) {
+                final app = context.watch<AppState>();
+                final cols = app.settings.tagDialogSimpleCols;
+                final dialogWidth = (cols * 80.0 + 500).clamp(700.0, 1000.0);
+                return SizedBox(
+                  width: dialogWidth,
+                  height: MediaQuery.of(ctx).size.height * 0.75,
+                  child: TagPickerBody(
                 simpleSelected: simpleSelected,
                 kvSelected: kvSelected,
                 onSimpleChanged: (id, v) => setState(() {
@@ -517,6 +525,8 @@ Future<({Set<String> simpleTagIds, Set<String> keyValueIds})?> showTagManagerDia
                   if (v) { kvSelected.add(id); } else { kvSelected.remove(id); }
                 }),
               ),
+                );
+              },
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
