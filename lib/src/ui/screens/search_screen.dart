@@ -35,6 +35,7 @@ class _SearchScreenState extends State<SearchScreen> {
   List<MediaItem> _results = const [];
   double _panelWidth = 300.0;
   MediaItem? _selected;
+  bool _selectMode = false;
   int _tagMinMatch = 0; // 0 = all tags required
 
   // Sort & filter — session only
@@ -59,7 +60,9 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _loading = true;
       _selected = null;
+      _selectMode = false;
     });
+    context.read<AppState>().clearItemSelection();
 
     try {
       final res = await app.items!.searchItemsGlobal(
@@ -95,13 +98,118 @@ class _SearchScreenState extends State<SearchScreen> {
       _filenameController.clear();
       _results = const [];
       _selected = null;
+      _selectMode = false;
       _untaggedIds = {};
       _sortField = _SortField.dateAdded;
       _sortAscending = false;
       _shuffleSeed = 0;
       _typeFilters.clear();
     });
+    context.read<AppState>().clearItemSelection();
   }
+
+  Future<void> _bulkActions() async {
+    final app = context.read<AppState>();
+    if (app.selectedItemIds.isEmpty) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.sell), title: const Text('Bulk add tag'), onTap: () => Navigator.pop(ctx, 'addTag')),
+          ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Bulk remove tag'), onTap: () => Navigator.pop(ctx, 'removeTag')),
+          ListTile(leading: const Icon(Icons.drive_file_move), title: const Text('Move to subcategory'), onTap: () => Navigator.pop(ctx, 'move')),
+          ListTile(leading: const Icon(Icons.download), title: const Text('Export to disk'), onTap: () => Navigator.pop(ctx, 'export')),
+          ListTile(leading: const Icon(Icons.delete), title: const Text('Delete (permanently)'), onTap: () => Navigator.pop(ctx, 'delete')),
+        ]),
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    if (choice == 'addTag' || choice == 'removeTag') {
+      final tagId = await _pickTagDialog();
+      if (tagId == null) return;
+      if (choice == 'addTag') {
+        await app.bulkAddTagToSelected(tagId);
+      } else {
+        await app.bulkRemoveTagFromSelected(tagId);
+      }
+      return;
+    }
+    if (choice == 'move') {
+      final subId = await _pickSubcategoryDialog();
+      if (subId == null) return;
+      await app.moveSelectedItems(subId);
+      return;
+    }
+    if (choice == 'export') {
+      final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select directory');
+      if (dir == null || !mounted) return;
+      final toExport = _applyFiltersAndSort(_results)
+          .where((i) => app.selectedItemIds.contains(i.id))
+          .toList();
+      int okCount = 0;
+      for (final item in toExport) {
+        final src = File(LibraryFolders.absPath(app.paths!.filesDir, item.storedRelPath));
+        if (!await src.exists()) continue;
+        await src.copy(_uniquePath(p.join(dir, item.originalName)));
+        okCount++;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported $okCount file${okCount == 1 ? '' : 's'}.')),
+      );
+      return;
+    }
+    if (choice == 'delete') {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Delete selected?'),
+          content: const Text('This will delete records and files from /Library/files.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+          ],
+        ),
+      );
+      if (ok == true && mounted) {
+        final res = await app.deleteSelectedItems(_applyFiltersAndSort(_results));
+        setState(() {
+          _results = _results.where((i) => !res.deleted.any((d) => d.id == i.id)).toList();
+          _selected = null;
+          _selectMode = false;
+        });
+        if (res.failed.isNotEmpty) {
+          final names = res.failed.map((e) => e.originalName).take(3).join(', ');
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to delete: $names')));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Deleted ${res.deleted.length} items.')));
+        }
+      }
+    }
+  }
+
+  Future<String?> _pickTagDialog() async {
+    final app = context.read<AppState>();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Select tag'),
+        content: SizedBox(
+          width: 420,
+          height: 300,
+          child: ListView(children: [
+            for (final t in app.tagList)
+              ListTile(title: Text(t.name), onTap: () => Navigator.pop(ctx, t.id)),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        ],
+      ),
+    );
+  }
+
 
   Future<String?> _pickSubcategoryDialog() async {
     final app = context.read<AppState>();
@@ -394,6 +502,47 @@ class _SearchScreenState extends State<SearchScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    if (_results.isNotEmpty) ...[
+                      OutlinedButton.icon(
+                        onPressed: _results.isEmpty ? null : () {
+                          setState(() => _selectMode = !_selectMode);
+                          if (!_selectMode) context.read<AppState>().clearItemSelection();
+                        },
+                        icon: Icon(_selectMode ? Icons.check_box : Icons.check_box_outline_blank),
+                        label: Text(_selectMode
+                            ? 'Select (${context.watch<AppState>().selectedItemIds.length})'
+                            : 'Select'),
+                        style: _selectMode
+                            ? OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary)
+                            : null,
+                      ),
+                      if (_selectMode) ...[
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            final app = context.read<AppState>();
+                            final displayIds = _applyFiltersAndSort(_results).map((i) => i.id).toSet();
+                            final allSelected = displayIds.every((id) => app.selectedItemIds.contains(id));
+                            if (allSelected) {
+                              app.clearItemSelection();
+                            } else {
+                              for (final id in displayIds) app.selectedItemIds.add(id);
+                              app.notifyListeners();
+                            }
+                            setState(() {});
+                          },
+                          icon: const Icon(Icons.select_all),
+                          label: const Text('All'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: context.watch<AppState>().selectedItemIds.isEmpty ? null : _bulkActions,
+                          icon: const Icon(Icons.more_horiz),
+                          label: const Text('Actions'),
+                        ),
+                      ],
+                    ],
                   ],
                 ),
               ),
@@ -439,7 +588,21 @@ class _SearchScreenState extends State<SearchScreen> {
                                     showTypeMarkers: app.settings.showTypeMarkers,
                                     showUntaggedIndicator: app.settings.showUntaggedIndicator,
                                     untaggedIds: _untaggedIds,
-                                    onSelect: (item) => setState(() => _selected = item),
+                                    onSelect: (item) {
+                                      if (_selectMode) {
+                                        app.toggleItemSelection(item.id);
+                                        if (app.selectedItemIds.isEmpty) setState(() => _selectMode = false);
+                                      } else {
+                                        setState(() => _selected = item);
+                                      }
+                                    },
+                                    onLongPress: (item) {
+                                      app.toggleItemSelection(item.id);
+                                      if (!_selectMode) setState(() => _selectMode = true);
+                                      if (app.selectedItemIds.isEmpty) setState(() => _selectMode = false);
+                                    },
+                                    selectedIds: app.selectedItemIds,
+                                    selectMode: _selectMode,
                                     onContextMenu: (gridCtx, item, pos) => _handleContextMenu(gridCtx, item, pos),
                                   ),
                           ),
@@ -551,7 +714,10 @@ class _ItemsGrid extends StatelessWidget {
   final bool showUntaggedIndicator;
   final Set<String> untaggedIds;
   final void Function(MediaItem item) onSelect;
+  final void Function(MediaItem item)? onLongPress;
   final void Function(BuildContext ctx, MediaItem item, Offset pos) onContextMenu;
+  final Set<String> selectedIds;
+  final bool selectMode;
 
   const _ItemsGrid({
     required this.items,
@@ -563,7 +729,10 @@ class _ItemsGrid extends StatelessWidget {
     this.showUntaggedIndicator = true,
     this.untaggedIds = const {},
     required this.onSelect,
+    this.onLongPress,
     required this.onContextMenu,
+    this.selectedIds = const {},
+    this.selectMode = false,
   });
 
   @override
@@ -585,6 +754,7 @@ class _ItemsGrid extends StatelessWidget {
         final it = items[i];
         final filePath = LibraryFolders.absPath(libraryFilesDir, it.storedRelPath);
         final isSelected = it.id == selectedItemId;
+        final isBulkSelected = selectedIds.contains(it.id);
 
         final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
         final hasThumb = thumbFile.existsSync();
@@ -630,15 +800,22 @@ class _ItemsGrid extends StatelessWidget {
 
         return InkWell(
           onTap: () => onSelect(it),
+          onLongPress: onLongPress != null ? () => onLongPress!(it) : null,
           onSecondaryTapDown: (details) => onContextMenu(ctx, it, details.globalPosition),
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                width: isSelected ? 2 : 1,
-                color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).dividerColor,
+                width: (isSelected || isBulkSelected) ? 2 : 1,
+                color: isBulkSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).dividerColor,
               ),
-              color: Theme.of(context).colorScheme.surface,
+              color: isBulkSelected
+                  ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+                  : Theme.of(context).colorScheme.surface,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -647,6 +824,22 @@ class _ItemsGrid extends StatelessWidget {
                   child: Stack(
                     children: [
                       Positioned.fill(child: thumb),
+                      // ── Checkbox overlay in select mode ─────────────────
+                      if (selectMode)
+                        Positioned(
+                          left: 6, top: 6,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.4),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              isBulkSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                              color: isBulkSelected ? Theme.of(context).colorScheme.primary : Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                        ),
                       // ── Type marker badge (bottom-right) ────────────────
                       if (showTypeMarkers)
                         Positioned(
