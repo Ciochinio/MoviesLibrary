@@ -13,6 +13,39 @@ import 'screens/favourites_screen.dart';
 import 'screens/raffle_screen.dart';
 import 'widgets/import_overlay_panel.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Nav item definitions — order here is the display order in the rail.
+// 'key' is what gets stored in hiddenNavItems.
+// always = true means the item cannot be hidden.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _NavItem {
+  final String key;
+  final IconData icon;
+  final String label;
+  final Widget page;
+  final bool always;
+
+  const _NavItem({
+    required this.key,
+    required this.icon,
+    required this.label,
+    required this.page,
+    this.always = false,
+  });
+}
+
+const _allNavItems = [
+  _NavItem(key: 'library',    icon: Icons.video_library, label: 'Library',    page: LibraryScreen(),    always: true),
+  _NavItem(key: 'favourites', icon: Icons.favorite,      label: 'Favourites', page: FavouritesScreen()),
+  _NavItem(key: 'raffle',     icon: Icons.casino,        label: 'Raffle',     page: RaffleScreen()),
+  _NavItem(key: 'search',     icon: Icons.search,        label: 'Search',     page: SearchScreen()),
+  _NavItem(key: 'notes',      icon: Icons.note_alt,      label: 'Notes',      page: NotesScreen()),
+  _NavItem(key: 'tags',       icon: Icons.sell,          label: 'Tags',       page: TagsScreen()),
+  _NavItem(key: 'categories', icon: Icons.folder,        label: 'Categories', page: CategoriesScreen()),
+  _NavItem(key: 'settings',   icon: Icons.settings,      label: 'Settings',   page: SettingsScreen(),   always: true),
+];
+
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -21,7 +54,8 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  int index = 0;
+  // Active key rather than index — survives items being hidden/shown.
+  String _activeKey = 'library';
   ImportController? _importController;
 
   @override
@@ -67,19 +101,21 @@ class _AppShellState extends State<AppShell> {
       );
     }
 
-    // Ensure controller is created when app becomes ready
     _importController ??= ImportController(app);
 
-    final pages = [
-      const LibraryScreen(),
-      const FavouritesScreen(),
-      const RaffleScreen(),
-      const SearchScreen(),
-      const NotesScreen(),
-      const TagsScreen(),
-      const CategoriesScreen(),
-      const SettingsScreen(),
-    ];
+    // Build the visible items list — always-visible items are never filtered.
+    final hidden = app.settings.hiddenNavItems;
+    final visible = _allNavItems
+        .where((item) => item.always || !hidden.contains(item.key))
+        .toList();
+
+    // If the active key is no longer visible, fall back to library.
+    if (!visible.any((item) => item.key == _activeKey)) {
+      _activeKey = 'library';
+    }
+
+    final railIndex = visible.indexWhere((item) => item.key == _activeKey);
+    final activePage = visible.firstWhere((item) => item.key == _activeKey).page;
 
     return ChangeNotifierProvider<ImportController>.value(
       value: _importController!,
@@ -92,25 +128,22 @@ class _AppShellState extends State<AppShell> {
             Row(
               children: [
                 NavigationRail(
-                  selectedIndex: index,
-                  onDestinationSelected: (v) => setState(() => index = v),
+                  selectedIndex: railIndex,
+                  onDestinationSelected: (v) =>
+                      setState(() => _activeKey = visible[v].key),
                   labelType: NavigationRailLabelType.none,
-                  destinations: const [
-                    NavigationRailDestination(icon: Icon(Icons.video_library), label: Text('Library')),
-                    NavigationRailDestination(icon: Icon(Icons.favorite), label: Text('Favourites')),
-                    NavigationRailDestination(icon: Icon(Icons.casino), label: Text('Raffle')),
-                    NavigationRailDestination(icon: Icon(Icons.search), label: Text('Search')),
-                    NavigationRailDestination(icon: Icon(Icons.note_alt), label: Text('Notes')),
-                    NavigationRailDestination(icon: Icon(Icons.sell), label: Text('Tags')),
-                    NavigationRailDestination(icon: Icon(Icons.folder), label: Text('Categories')),
-                    NavigationRailDestination(icon: Icon(Icons.settings), label: Text('Settings')),
+                  destinations: [
+                    for (final item in visible)
+                      NavigationRailDestination(
+                        icon: Icon(item.icon),
+                        label: Text(item.label),
+                      ),
                   ],
                 ),
                 const VerticalDivider(width: 1),
-                Expanded(child: pages[index]),
+                Expanded(child: activePage),
               ],
             ),
-            // ─── Import overlay (docked bottom-right) ───
             const ImportOverlayPanel(),
           ],
         ),

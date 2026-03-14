@@ -642,6 +642,12 @@ Future<void> setStartMuted(bool value) async {
   notifyListeners();
 }
 
+Future<void> setHiddenNavItems(Set<String> hidden) async {
+  settings = settings.copyWith(hiddenNavItems: hidden);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
+  notifyListeners();
+}
+
 Future<void> updateSettings(AppSettings newSettings) async {
   settings = newSettings;
   await AppSettings.saveLibrary(paths!.settingsFile, settings);

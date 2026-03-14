@@ -33,6 +33,7 @@ class AppSettings {
   final ThemeMode themeMode;
   final bool videoAutostartInPanel;
   final bool startMuted;
+  final Set<String> hiddenNavItems;
 
   const AppSettings({
     required this.importMode,
@@ -45,6 +46,7 @@ class AppSettings {
     required this.themeMode,
     this.videoAutostartInPanel = false,
     this.startMuted = false,
+    this.hiddenNavItems = const {},
   });
 
   AppSettings copyWith({
@@ -58,6 +60,7 @@ class AppSettings {
     ThemeMode? themeMode,
     bool? videoAutostartInPanel,
     bool? startMuted,
+    Set<String>? hiddenNavItems,
   }) {
     return AppSettings(
       importMode: importMode ?? this.importMode,
@@ -70,6 +73,7 @@ class AppSettings {
       themeMode: themeMode ?? this.themeMode,
       videoAutostartInPanel: videoAutostartInPanel ?? this.videoAutostartInPanel,
       startMuted: startMuted ?? this.startMuted,
+      hiddenNavItems: hiddenNavItems ?? this.hiddenNavItems,
     );
   }
 
@@ -87,6 +91,7 @@ class AppSettings {
         'themeMode': themeMode.name,
         'videoAutostartInPanel': videoAutostartInPanel,
         'startMuted': startMuted,
+        'hiddenNavItems': hiddenNavItems.toList(),
       };
 
   static AppSettings _fromJsonPair(
@@ -110,6 +115,7 @@ class AppSettings {
       ),
       videoAutostartInPanel: (global['videoAutostartInPanel'] as bool?) ?? false,
       startMuted: (global['startMuted'] as bool?) ?? false,
+      hiddenNavItems: ((global['hiddenNavItems'] as List?)?.cast<String>().toSet()) ?? const {},
     );
   }
 
@@ -159,5 +165,6 @@ class AppSettings {
     themeMode: ThemeMode.system,
     videoAutostartInPanel: false,
     startMuted: false,
+    hiddenNavItems: {},
   );
 }

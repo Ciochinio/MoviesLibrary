@@ -132,6 +132,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
+          // ─── Sidebar visibility ───
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Sidebar items', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  const Text('Library and Settings are always visible.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  for (final entry in const [
+                    ('favourites', 'Favourites'),
+                    ('raffle',     'Raffle'),
+                    ('search',     'Search'),
+                    ('notes',      'Notes'),
+                    ('tags',       'Tags'),
+                    ('categories', 'Categories'),
+                  ]) ...[
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(entry.$2),
+                      value: !app.settings.hiddenNavItems.contains(entry.$1),
+                      onChanged: (visible) {
+                        final hidden = Set<String>.from(app.settings.hiddenNavItems);
+                        if (visible) {
+                          hidden.remove(entry.$1);
+                        } else {
+                          hidden.add(entry.$1);
+                        }
+                        context.read<AppState>().setHiddenNavItems(hidden);
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
           // ─── Confirm delete ───
           Card(
             child: SwitchListTile(
