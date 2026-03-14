@@ -12,6 +12,7 @@ import '../../core/models.dart';
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/tag_filter_panel.dart';
 import '../widgets/media_grid_controls.dart';
+import '../widgets/media_grid_card.dart';
 import '../widgets/shared_player_panel.dart';
 
 // Sort / Filter enums and helpers are in media_grid_controls.dart
@@ -33,7 +34,8 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _loading = false;
   bool _showFilterPanel = false;
   List<MediaItem> _results = const [];
-  double _panelWidth = 300.0;
+  double _panelWidth = kPanelNormal;
+  bool _theatreModeActive = false;
   MediaItem? _selected;
   bool _selectMode = false;
   int _tagMinMatch = 0; // 0 = all tags required
@@ -656,7 +658,11 @@ class _SearchScreenState extends State<SearchScreen> {
                           libraryFilesDir: app.paths!.filesDir,
                           thumbsDir: app.paths!.thumbsDir,
                           allItems: _applyFiltersAndSort(_results),
-                          onTheatreChanged: (w) => setState(() => _panelWidth = w),
+                          onTheatreChanged: (w) => setState(() {
+                            _panelWidth = w;
+                            _theatreModeActive = w > kPanelNormal;
+                          }),
+                          initialTheatreMode: _theatreModeActive,
                           onOpen: () async {
                             final abs = LibraryFolders.absPath(app.paths!.filesDir, _selected!.storedRelPath);
                             await OpenFilex.open(abs);
@@ -701,7 +707,7 @@ class _SearchScreenState extends State<SearchScreen> {
 }
 
 
-// ──────────────────────────────────────────────
+
 // Items Grid
 // ──────────────────────────────────────────────
 class _ItemsGrid extends StatelessWidget {
@@ -713,11 +719,11 @@ class _ItemsGrid extends StatelessWidget {
   final bool showTypeMarkers;
   final bool showUntaggedIndicator;
   final Set<String> untaggedIds;
-  final void Function(MediaItem item) onSelect;
-  final void Function(MediaItem item)? onLongPress;
-  final void Function(BuildContext ctx, MediaItem item, Offset pos) onContextMenu;
   final Set<String> selectedIds;
   final bool selectMode;
+  final void Function(MediaItem item) onSelect;
+  final void Function(MediaItem item) onLongPress;
+  final void Function(BuildContext ctx, MediaItem item, Offset pos) onContextMenu;
 
   const _ItemsGrid({
     required this.items,
@@ -728,18 +734,16 @@ class _ItemsGrid extends StatelessWidget {
     this.showTypeMarkers = true,
     this.showUntaggedIndicator = true,
     this.untaggedIds = const {},
-    required this.onSelect,
-    this.onLongPress,
-    required this.onContextMenu,
     this.selectedIds = const {},
     this.selectMode = false,
+    required this.onSelect,
+    required this.onLongPress,
+    required this.onContextMenu,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return const Center(child: Text('No results'));
-    }
+    if (items.isEmpty) return const Center(child: Text('No results'));
 
     return GridView.builder(
       padding: const EdgeInsets.all(12),
@@ -752,143 +756,22 @@ class _ItemsGrid extends StatelessWidget {
       itemCount: items.length,
       itemBuilder: (ctx, i) {
         final it = items[i];
-        final filePath = LibraryFolders.absPath(libraryFilesDir, it.storedRelPath);
-        final isSelected = it.id == selectedItemId;
-        final isBulkSelected = selectedIds.contains(it.id);
-
-        final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
-        final hasThumb = thumbFile.existsSync();
-        final isGif = isGifPath(filePath);
-        final needsThumbIndicator = (it.type == ItemType.video || (isGif && !gifAutoplay)) && !hasThumb;
-
-        Widget thumb;
-        if (isGif && gifAutoplay) {
-          thumb = ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
-                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-          );
-        } else if (hasThumb) {
-          thumb = ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.file(thumbFile, fit: BoxFit.cover, cacheWidth: 320,
-                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48)),
-          );
-        } else if (it.type == ItemType.image) {
-          thumb = ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320,
-                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-          );
-        } else if (it.type == ItemType.video) {
-          thumb = Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            child: const Center(child: Icon(Icons.movie, size: 56)),
-          );
-        } else {
-          thumb = Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            child: const Center(child: Icon(Icons.insert_drive_file, size: 56)),
-          );
-        }
-
-        return InkWell(
+        return MediaGridCard(
+          key: ValueKey(it.id),
+          item: it,
+          libraryFilesDir: libraryFilesDir,
+          thumbsDir: thumbsDir,
+          gifAutoplay: gifAutoplay,
+          isSelected: it.id == selectedItemId,
+          isBulkSelected: selectedIds.contains(it.id),
+          selectMode: selectMode,
+          showTypeMarkers: showTypeMarkers,
+          showUntaggedIndicator: showUntaggedIndicator,
+          isUntagged: untaggedIds.contains(it.id),
+          showFavourite: false,
           onTap: () => onSelect(it),
-          onLongPress: onLongPress != null ? () => onLongPress!(it) : null,
-          onSecondaryTapDown: (details) => onContextMenu(ctx, it, details.globalPosition),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                width: (isSelected || isBulkSelected) ? 2 : 1,
-                color: isBulkSelected
-                    ? Theme.of(context).colorScheme.primary
-                    : isSelected
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).dividerColor,
-              ),
-              color: isBulkSelected
-                  ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
-                  : Theme.of(context).colorScheme.surface,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(child: thumb),
-                      // ── Checkbox overlay in select mode ─────────────────
-                      if (selectMode)
-                        Positioned(
-                          left: 6, top: 6,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.4),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              isBulkSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                              color: isBulkSelected ? Theme.of(context).colorScheme.primary : Colors.white,
-                              size: 22,
-                            ),
-                          ),
-                        ),
-                      // ── Type marker badge (bottom-right) ────────────────
-                      if (showTypeMarkers)
-                        Positioned(
-                          right: 8, bottom: 8,
-                          child: TypeBadge(item: it, isGif: isGif, hasThumb: hasThumb),
-                        ),
-                      // ! indicator for videos/GIFs without thumbnail
-                      if (needsThumbIndicator)
-                        Positioned(
-                          left: 8, bottom: 8,
-                          child: Container(
-                            width: 22, height: 22,
-                            decoration: BoxDecoration(color: Colors.orange.withOpacity(0.9), shape: BoxShape.circle),
-                            child: const Center(child: Text('!', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold))),
-                          ),
-                        ),
-                      // ── Untagged dot (top-left) ──────────────────────────
-                      if (showUntaggedIndicator && untaggedIds.contains(it.id))
-                        Positioned(
-                          left: 8, top: 8,
-                          child: Container(
-                            width: 10, height: 10,
-                            decoration: BoxDecoration(
-                              color: Colors.amber.shade600,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 1.5),
-                            ),
-                          ),
-                        ),
-                      if (it.isDuplicate)
-                        Positioned(
-                          right: 8, top: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(999)),
-                            child: const Text('DUP', style: TextStyle(color: Colors.white, fontSize: 12)),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Text(it.originalName, maxLines: 2, overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium),
-                ),
-              ],
-            ),
-          ),
+          onLongPress: () => onLongPress(it),
+          onContextMenu: (cardCtx, pos) => onContextMenu(cardCtx, it, pos),
         );
       },
     );

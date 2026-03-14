@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/library_folders.dart';
 import '../../core/models.dart';
+import '../../core/session_volume.dart';
 import '../widgets/media_player_widget.dart';
 import '../widgets/tag_manager_dialog.dart';
 

@@ -16,6 +16,7 @@ import '../../core/import_controller.dart';
 
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/media_grid_controls.dart';
+import '../widgets/media_grid_card.dart';
 import '../widgets/shared_player_panel.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -1236,8 +1237,7 @@ return LayoutBuilder(
 }
 
 
-// ──────────────────────────────────────────────
-// Items Grid — GIF first-frame + video thumbnails
+// Items Grid
 // ──────────────────────────────────────────────
 class _ItemsGrid extends StatelessWidget {
   final List<MediaItem> items;
@@ -1245,7 +1245,7 @@ class _ItemsGrid extends StatelessWidget {
   final Directory thumbsDir;
   final String? selectedItemId;
   final Set<String> selectedIds;
-  final bool _gifAutoplay;
+  final bool gifAutoplay;
   final ScrollController? scrollController;
   final bool selectMode;
   final bool showTypeMarkers;
@@ -1264,7 +1264,7 @@ class _ItemsGrid extends StatelessWidget {
     required this.thumbsDir,
     required this.selectedItemId,
     required this.selectedIds,
-    required bool gifAutoplay,
+    required this.gifAutoplay,
     this.scrollController,
     this.selectMode = false,
     this.showTypeMarkers = true,
@@ -1276,7 +1276,7 @@ class _ItemsGrid extends StatelessWidget {
     required this.onToggleFavourite,
     required this.onLongPress,
     required this.onContextMenu,
-  }) : _gifAutoplay = gifAutoplay;
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1295,261 +1295,26 @@ class _ItemsGrid extends StatelessWidget {
       itemBuilder: (ctx, i) {
         final it = items[i];
         final filePath = LibraryFolders.absPath(libraryFilesDir, it.storedRelPath);
-        final isSelected = it.id == selectedItemId;
-        final isBulk = selectedIds.contains(it.id);
-
-        // Check for custom thumbnail (videos and GIFs)
-        final thumbFile = File(p.join(thumbsDir.path, '${it.id}.jpg'));
-        final hasThumb = thumbFile.existsSync();
-        final isGif = isGifPath(filePath);
-        // Show "no thumbnail" indicator for videos and non-autoplay GIFs without custom thumbnail
-        final needsThumbIndicator = (it.type == ItemType.video || (isGif && !_gifAutoplay)) && !hasThumb;
-        final isFavourite = it.isFavourite;
-
-        Widget thumb;
-        if (isGif && _gifAutoplay) {
-          // GIF autoplay ON — always show animated, ignore thumbnail
-          thumb = ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-          );
-        } else if (hasThumb) {
-          // Custom thumbnail — use version counter as cache key so new thumbs show immediately
-          final version = thumbVersions[it.id] ?? 0;
-          thumb = ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: ColoredBox(
-              color: Colors.black,
-              child: Image(
-                key: ValueKey('${it.id}_thumb_$version'),
-                image: ResizeImage(FileImage(thumbFile), width: 320),
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48, color: Colors.white),
-              ),
-            ),
-          );
-        } else if (it.type == ItemType.image) {
-          if (isGif) {
-            // GIF autoplay OFF, no thumbnail: show static first frame
-            thumb = ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: _StaticGifImage(filePath: filePath, fit: BoxFit.cover),
-            );
-          } else {
-            // Static image
-            thumb = ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(File(filePath), fit: BoxFit.cover, cacheWidth: 320, errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, size: 48)),
-            );
-          }
-        } else if (it.type == ItemType.video) {
-          // Video without thumbnail — show icon with play overlay
-          thumb = Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            child: const Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.movie, size: 40),
-                SizedBox(height: 4),
-                Text('Video', style: TextStyle(fontSize: 11)),
-              ]),
-            ),
-          );
-        } else {
-          thumb = Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            child: const Center(child: Icon(Icons.insert_drive_file, size: 40)),
-          );
-        }
-
-        return GestureDetector(
-          onSecondaryTapDown: (details) => onContextMenu(ctx, it, details.globalPosition),
-          child: InkWell(
-            onTap: () => onSelect(it),
-            onLongPress: () => onLongPress(it),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  width: (isSelected || isBulk) ? 2 : 1,
-                  color: isBulk
-                      ? Theme.of(context).colorScheme.primary
-                      : isSelected
-                          ? Theme.of(context).colorScheme.secondary
-                          : Theme.of(context).dividerColor,
-                ),
-                color: Theme.of(context).colorScheme.surface,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(child: Stack(children: [
-                    Positioned.fill(child: thumb),
-                    // ── Type marker badge (bottom-right) ──────────────────
-                    if (showTypeMarkers)
-                      Positioned(
-                        right: 8, bottom: 8,
-                        child: TypeBadge(item: it, isGif: isGif, hasThumb: hasThumb),
-                      ),
-                    // "!" indicator for videos/GIFs without thumbnails
-                    if (needsThumbIndicator)
-                      Positioned(
-                        left: 8, bottom: 8,
-                        child: Container(
-                          width: 22, height: 22,
-                          decoration: BoxDecoration(
-                            color: Colors.orange.withOpacity(0.9),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Center(
-                            child: Text('!', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      ),
-                    // ── Untagged dot (top-left) ────────────────────────────
-                    if (showUntaggedIndicator && untaggedIds.contains(it.id))
-                      Positioned(
-                        left: selectMode ? 36 : 8,
-                        top: 8,
-                        child: Container(
-                          width: 10, height: 10,
-                          decoration: BoxDecoration(
-                            color: Colors.amber.shade600,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 1.5),
-                          ),
-                        ),
-                      ),
-                    if (it.isDuplicate)
-                      Positioned(
-                        right: 8, top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(color: Colors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(999)),
-                          child: const Text('DUP', style: TextStyle(color: Colors.white, fontSize: 12)),
-                        ),
-                      ),
-                    // Heart overlay — display only, long-press to toggle
-                    if (!selectMode && isFavourite)
-                      Positioned(
-                        right: 8, top: 8,
-                        child: Container(
-                          width: 28, height: 28,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.black.withOpacity(0.45),
-                          ),
-                          child: const Icon(Icons.favorite, size: 16, color: Colors.redAccent),
-                        ),
-                      ),
-                    // Checkbox overlay in select mode
-                    if (selectMode)
-                      Positioned(
-                        left: 8, top: 8,
-                        child: Container(
-                          width: 24, height: 24,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isBulk
-                                ? Theme.of(context).colorScheme.primary
-                                : Colors.black.withOpacity(0.4),
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          child: isBulk
-                              ? const Icon(Icons.check, size: 14, color: Colors.white)
-                              : null,
-                        ),
-                      ),
-                  ])),
-                  Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Text(it.originalName, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodyMedium),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        return MediaGridCard(
+          key: ValueKey(it.id),
+          item: it,
+          libraryFilesDir: libraryFilesDir,
+          thumbsDir: thumbsDir,
+          gifAutoplay: gifAutoplay,
+          isSelected: it.id == selectedItemId,
+          isBulkSelected: selectedIds.contains(it.id),
+          selectMode: selectMode,
+          showTypeMarkers: showTypeMarkers,
+          showUntaggedIndicator: showUntaggedIndicator,
+          isUntagged: untaggedIds.contains(it.id),
+          showFavourite: true,
+          isFavourite: it.isFavourite,
+          thumbVersion: thumbVersions[it.id] ?? 0,
+          onTap: () => onSelect(it),
+          onLongPress: () => onLongPress(it),
+          onContextMenu: (cardCtx, pos) => onContextMenu(cardCtx, it, pos),
         );
       },
-    );
-  }
-}
-
-
-// ──────────────────────────────────────────────
-// Static GIF: renders only the first frame
-// ──────────────────────────────────────────────
-class _StaticGifImage extends StatefulWidget {
-  final String filePath;
-  final BoxFit fit;
-
-  const _StaticGifImage({required this.filePath, this.fit = BoxFit.cover});
-
-  @override
-  State<_StaticGifImage> createState() => _StaticGifImageState();
-}
-
-class _StaticGifImageState extends State<_StaticGifImage> {
-  ui.Image? _frame;
-  bool _failed = false;
-
-  // Global cache so we don't re-decode the same GIF every rebuild
-  static final Map<String, ui.Image> _cache = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _loadFirstFrame();
-  }
-
-  @override
-  void didUpdateWidget(covariant _StaticGifImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.filePath != widget.filePath) {
-      _frame = null;
-      _failed = false;
-      _loadFirstFrame();
-    }
-  }
-
-  Future<void> _loadFirstFrame() async {
-    // Check cache first
-    final cached = _cache[widget.filePath];
-    if (cached != null) {
-      if (mounted) setState(() => _frame = cached);
-      return;
-    }
-
-    try {
-      final bytes = await File(widget.filePath).readAsBytes();
-      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 320);
-      final frameInfo = await codec.getNextFrame();
-      final image = frameInfo.image;
-      codec.dispose();
-
-      _cache[widget.filePath] = image;
-
-      if (mounted) setState(() => _frame = image);
-    } catch (_) {
-      if (mounted) setState(() => _failed = true);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_failed) return const Center(child: Icon(Icons.image_not_supported, size: 48));
-    if (_frame == null) return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)));
-
-    return RawImage(
-      image: _frame,
-      fit: widget.fit,
-      width: double.infinity,
-      height: double.infinity,
     );
   }
 }

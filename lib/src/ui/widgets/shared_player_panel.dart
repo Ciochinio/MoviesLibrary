@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -61,6 +62,12 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
   late PmlPlayerController _controller;
   late bool _theatreMode;
 
+  // Cached aspect ratio so playerH recalculates immediately on theatre toggle
+  // without waiting for the ValueNotifier to re-emit.
+  double? _lastAspect;
+
+  StreamSubscription<bool>? _completedSub;
+
   @override
   void initState() {
     super.initState();
@@ -79,6 +86,7 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
 
   @override
   void dispose() {
+    _completedSub?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -86,11 +94,30 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
   Future<void> _openCurrentItem() async {
     final filePath = LibraryFolders.absPath(widget.libraryFilesDir, widget.item.storedRelPath);
     final app = context.read<AppState>();
+
+    // Cancel previous completion listener before opening a new item.
+    await _completedSub?.cancel();
+    _completedSub = null;
+
     await _controller.open(widget.item, filePath);
-    // Autostart video only if setting enabled
+
+    // Re-apply session volume after open — media_kit can reset it internally.
+    _controller.applySessionVolume();
+
+    // Autostart video if setting enabled.
     if (!_controller.isStaticImage && !_controller.isGif && app.settings.videoAutostartInPanel) {
       _controller.player.play();
     }
+
+    // Loop videos: seek to start and replay on completion.
+    if (!_controller.isStaticImage && !_controller.isGif) {
+      _completedSub = _controller.player.stream.completed.listen((completed) {
+        if (!completed || !mounted) return;
+        _controller.player.seek(Duration.zero);
+        _controller.player.play();
+      });
+    }
+
     if (mounted) setState(() {});
   }
 
@@ -120,17 +147,20 @@ class _SharedPlayerPanelState extends State<SharedPlayerPanel> {
 
     // Available height = screen height minus title bar (~32) and app header (~52)
     final availableH = MediaQuery.of(context).size.height - 32 - 52;
-    final metaReserve = (availableH * 0.48).clamp(280.0, 440.0);
-    final maxPlayerH = (availableH - metaReserve).clamp(80.0, availableH * 0.65);
+    final metaReserve = (availableH * 0.35).clamp(240.0, 360.0);
+    final maxPlayerH = availableH - metaReserve;
 
     return ValueListenableBuilder<double?>(
       valueListenable: _controller.aspectRatio,
       builder: (context, aspect, _) {
-        // For images/GIFs: use actual aspect ratio, capped by available space
-        // Use actual aspect ratio for all media types when known
+        // Cache the latest known aspect so theatre toggle (which only calls
+        // setState, not the notifier) still recalculates playerH correctly.
+        if (aspect != null) _lastAspect = aspect;
+        final resolvedAspect = _lastAspect;
+
         double playerH;
-        if (aspect != null) {
-          playerH = (panelW / aspect).clamp(100.0, maxPlayerH);
+        if (resolvedAspect != null) {
+          playerH = (panelW / resolvedAspect).clamp(100.0, maxPlayerH);
         } else {
           playerH = panelW * 9 / 16;
         }

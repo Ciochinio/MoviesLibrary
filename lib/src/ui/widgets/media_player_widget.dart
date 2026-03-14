@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -8,22 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/models.dart';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SessionVolume — app-wide singleton so all players share volume
-// ─────────────────────────────────────────────────────────────────────────────
-
-class SessionVolume {
-  SessionVolume._();
-  static final SessionVolume instance = SessionVolume._();
-
-  double volume = 1.0;
-  bool muted = false;
-
-  void initFromSettings(bool startMuted) {
-    muted = startMuted;
-  }
-}
+import '../../core/session_volume.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PmlPlayerController
@@ -50,6 +36,8 @@ class PmlPlayerController {
     _applySessionVolume();
   }
 
+  void applySessionVolume() => _applySessionVolume();
+
   void _applySessionVolume() {
     final sv = SessionVolume.instance;
     _player.setVolume(sv.muted ? 0 : sv.volume * 100);
@@ -63,11 +51,35 @@ class PmlPlayerController {
 
     if (_isStaticImage || _isGif) {
       await _player.stop();
+      // Resolve image/GIF aspect ratio here so it's ready before the
+      // panel rebuilds — avoids the race where MediaPlayerWidget.initState
+      // checks isGif before open() has finished.
+      await _resolveImageAspect(filePath);
       return;
     }
 
     await _player.open(Media(filePath), play: false);
+    // Apply immediately as best-effort, then again once media_kit has fully
+    // initialised the track (first non-zero duration event). media_kit resets
+    // volume internally during track loading, so the deferred call is the one
+    // that actually sticks.
     _applySessionVolume();
+    _player.stream.duration
+        .firstWhere((d) => d > Duration.zero)
+        .then((_) => _applySessionVolume())
+        .ignore();
+  }
+
+  Future<void> _resolveImageAspect(String filePath) async {
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final w = frame.image.width.toDouble();
+      final h = frame.image.height.toDouble();
+      codec.dispose();
+      if (w > 0 && h > 0) aspectRatio.value = w / h;
+    } catch (_) {}
   }
 
   /// Notifies listeners when the aspect ratio (width/height) is resolved.
@@ -134,9 +146,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   double _volume = SessionVolume.instance.volume;
   bool _isMuted = SessionVolume.instance.muted;
 
-  // ── Image aspect ratio ────────────────────────────────────────────────────
-  double? _imageAspect;
-
   final List<StreamSubscription<dynamic>> _subs = [];
 
   bool get _isImageOrGif => widget.controller.isStaticImage || widget.controller.isGif;
@@ -145,7 +154,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   void initState() {
     super.initState();
     if (!_isImageOrGif) _subscribeToPlayer();
-    if (_isImageOrGif) _resolveImageAspect();
   }
 
   @override
@@ -159,11 +167,9 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         _duration = Duration.zero;
         _isPlaying = false;
         _videoAspect = null;
-        _imageAspect = null;
       });
       widget.controller.aspectRatio.value = null;
       if (!_isImageOrGif) _subscribeToPlayer();
-      if (_isImageOrGif) _resolveImageAspect();
     }
     _volume = SessionVolume.instance.volume;
     _isMuted = SessionVolume.instance.muted;
@@ -189,23 +195,6 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
         if (w != null && w > 1) setState(() => _videoAspect = w / v);
       }
     }));
-  }
-
-  void _resolveImageAspect() {
-    final file = File(widget.filePath);
-    if (!file.existsSync()) return;
-    final image = Image.file(file);
-    image.image.resolve(const ImageConfiguration()).addListener(
-      ImageStreamListener((info, _) {
-        if (!mounted) return;
-        final w = info.image.width.toDouble();
-        final h = info.image.height.toDouble();
-        if (w > 0 && h > 0) {
-          setState(() => _imageAspect = w / h);
-          widget.controller.aspectRatio.value = w / h;
-        }
-      }),
-    );
   }
 
   @override
@@ -278,16 +267,13 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   /// Images and GIFs: just the image, no controls overlay.
   /// Expand button shown as a small overlay top-right if onExpand is set.
   Widget _buildImageViewer() {
-    return _withAspectRatio(
-      aspect: _imageAspect,
-      child: Image.file(
-        File(widget.filePath),
-        fit: BoxFit.contain,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) =>
-            const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white38)),
-      ),
+    return Image.file(
+      File(widget.filePath),
+      fit: BoxFit.contain,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) =>
+          const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.white38)),
     );
   }
 
@@ -304,7 +290,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
               onTap: togglePlay,
               behavior: HitTestBehavior.opaque,
               child: _withAspectRatio(
-                aspect: _videoAspect,
+                aspect: widget.compact ? null : _videoAspect,
                 child: Video(
                   controller: widget.controller.videoController,
                   controls: NoVideoControls,

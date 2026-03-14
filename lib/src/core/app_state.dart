@@ -10,6 +10,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'db.dart';
 import 'models.dart';
+import 'session_volume.dart';
 import 'portable_paths.dart';
 import 'repositories.dart';
 import 'raffle_repository.dart';
@@ -92,8 +93,13 @@ class AppState extends ChangeNotifier {
     // Save selection into settings.json inside library
     await PortablePaths.saveSelectedLibraryPath(paths!.settingsFile, libraryPath);
 
-    settings = await AppSettings.load(paths!.settingsFile);
-    await AppSettings.save(paths!.settingsFile, settings);
+    settings = await AppSettings.load(
+      librarySettingsFile: paths!.settingsFile,
+      globalSettingsFile: paths!.globalSettingsFile,
+    );
+    await AppSettings.saveLibrary(paths!.settingsFile, settings);
+    await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
+    SessionVolume.instance.initFromSettings(settings.startMuted);
 
     _appDb = AppDb(paths!.dbFile.path);
     _db = await _appDb!.open();
@@ -589,55 +595,57 @@ Future<String> _hashFile(File f) async {
 
 Future<void> setImportMode(ImportMode mode) async {
   settings = settings.copyWith(importMode: mode);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveLibrary(paths!.settingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setConfirmDelete(bool value) async {
   settings = settings.copyWith(confirmDelete: value);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveLibrary(paths!.settingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setGifAutoplay(bool value) async {
   settings = settings.copyWith(gifAutoplay: value);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setShowTypeMarkers(bool value) async {
   settings = settings.copyWith(showTypeMarkers: value);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setShowUntaggedIndicator(bool value) async {
   settings = settings.copyWith(showUntaggedIndicator: value);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setThemeMode(ThemeMode mode) async {
   settings = settings.copyWith(themeMode: mode);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setVideoAutostartInPanel(bool value) async {
   settings = settings.copyWith(videoAutostartInPanel: value);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
   notifyListeners();
 }
 
 Future<void> setStartMuted(bool value) async {
   settings = settings.copyWith(startMuted: value);
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
+  SessionVolume.instance.initFromSettings(value);
   notifyListeners();
 }
 
 Future<void> updateSettings(AppSettings newSettings) async {
   settings = newSettings;
-  await AppSettings.save(paths!.settingsFile, settings);
+  await AppSettings.saveLibrary(paths!.settingsFile, settings);
+  await AppSettings.saveGlobal(paths!.globalSettingsFile, settings);
   notifyListeners();
 }
 

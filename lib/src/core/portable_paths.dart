@@ -9,7 +9,8 @@ class PortablePaths {
   final Directory filesDir;
   final Directory thumbsDir;
   final Directory attachmentsDir;
-  final File settingsFile;
+  final File settingsFile;       // Library/settings.json  — library-specific
+  final File globalSettingsFile; // <exeDir>/global_settings.json — app-wide
   final File dbFile;
 
   PortablePaths._({
@@ -19,10 +20,12 @@ class PortablePaths {
     required this.thumbsDir,
     required this.attachmentsDir,
     required this.settingsFile,
+    required this.globalSettingsFile,
     required this.dbFile,
   });
 
   static const _settingsName = 'settings.json';
+  static const _globalSettingsName = 'global_settings.json';
 
   static Future<PortablePaths> forLibraryPath(String libraryPath) async {
     final libraryDir = Directory(libraryPath);
@@ -41,6 +44,10 @@ class PortablePaths {
     final settingsFile = File(p.join(libraryDir.path, _settingsName));
     final dbFile = File(p.join(dbDir.path, 'library.sqlite'));
 
+    // Global settings live next to the executable so they survive library switches.
+    final exeDir = Directory(p.dirname(Platform.resolvedExecutable));
+    final globalSettingsFile = File(p.join(exeDir.path, _globalSettingsName));
+
     return PortablePaths._(
       libraryDir: libraryDir,
       dbDir: dbDir,
@@ -48,6 +55,7 @@ class PortablePaths {
       thumbsDir: thumbsDir,
       attachmentsDir: attachmentsDir,
       settingsFile: settingsFile,
+      globalSettingsFile: globalSettingsFile,
       dbFile: dbFile,
     );
   }

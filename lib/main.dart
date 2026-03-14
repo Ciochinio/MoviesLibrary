@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'src/app.dart';
 import 'src/core/app_state.dart';
+import 'src/core/session_volume.dart';
 import 'src/ui/widgets/media_player_widget.dart';
 
 void main() async {
