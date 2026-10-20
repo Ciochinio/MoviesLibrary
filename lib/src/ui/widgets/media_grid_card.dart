@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/models.dart';
 import '../../core/library_folders.dart';
+import '../../core/vr_format.dart';
 import 'media_grid_controls.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +126,9 @@ class MediaGridCard extends StatelessWidget {
   /// changes. Pass 0 (default) for screens that don't track thumb versions.
   final int thumbVersion;
 
+  /// VR format from the item's `VR` tag; shows a VR badge when set.
+  final VrFormat? vrFormat;
+
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   final void Function(BuildContext ctx, Offset globalPosition) onContextMenu;
@@ -147,6 +151,7 @@ class MediaGridCard extends StatelessWidget {
     this.showFavourite = false,
     this.isFavourite = false,
     this.thumbVersion = 0,
+    this.vrFormat,
   });
 
   @override
@@ -320,11 +325,31 @@ class MediaGridCard extends StatelessWidget {
                         ),
                       ),
 
-                    // ── Type marker badge (bottom-right) ────────────────────
-                    if (showTypeMarkers)
+                    // ── VR + type marker badges (bottom-right) ──────────────
+                    if (showTypeMarkers || vrFormat != null)
                       Positioned(
                         right: 8, bottom: 8,
-                        child: TypeBadge(item: item, isGif: isGif, hasThumb: hasThumb),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          if (vrFormat != null)
+                            Tooltip(
+                              message: vrFormat!.label,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.deepPurple.withOpacity(0.85),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text('VR',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                          if (vrFormat != null && showTypeMarkers) const SizedBox(width: 4),
+                          if (showTypeMarkers)
+                            TypeBadge(item: item, isGif: isGif, hasThumb: hasThumb),
+                        ]),
                       ),
 
                     // ── No-thumbnail indicator (bottom-left) ────────────────

@@ -16,7 +16,7 @@ enum ImportMode { copy, move }
 //
 //   Global settings   → <exeDir>/global_settings.json
 //     gifAutoplay, showTypeMarkers, showUntaggedIndicator, themeMode,
-//     videoAutostartInPanel, startMuted
+//     videoAutostartInPanel, startMuted, taggerPath
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AppSettings {
@@ -34,6 +34,8 @@ class AppSettings {
   final bool videoAutostartInPanel;
   final bool startMuted;
   final Set<String> hiddenNavItems;
+  /// Folder of the Python auto-tagger ('' = auto-detect next to the app/library).
+  final String taggerPath;
 
   const AppSettings({
     required this.importMode,
@@ -47,6 +49,7 @@ class AppSettings {
     this.videoAutostartInPanel = false,
     this.startMuted = false,
     this.hiddenNavItems = const {},
+    this.taggerPath = '',
   });
 
   AppSettings copyWith({
@@ -61,6 +64,7 @@ class AppSettings {
     bool? videoAutostartInPanel,
     bool? startMuted,
     Set<String>? hiddenNavItems,
+    String? taggerPath,
   }) {
     return AppSettings(
       importMode: importMode ?? this.importMode,
@@ -74,6 +78,7 @@ class AppSettings {
       videoAutostartInPanel: videoAutostartInPanel ?? this.videoAutostartInPanel,
       startMuted: startMuted ?? this.startMuted,
       hiddenNavItems: hiddenNavItems ?? this.hiddenNavItems,
+      taggerPath: taggerPath ?? this.taggerPath,
     );
   }
 
@@ -92,6 +97,7 @@ class AppSettings {
         'videoAutostartInPanel': videoAutostartInPanel,
         'startMuted': startMuted,
         'hiddenNavItems': hiddenNavItems.toList(),
+        'taggerPath': taggerPath,
       };
 
   static AppSettings _fromJsonPair(
@@ -116,6 +122,7 @@ class AppSettings {
       videoAutostartInPanel: (global['videoAutostartInPanel'] as bool?) ?? false,
       startMuted: (global['startMuted'] as bool?) ?? false,
       hiddenNavItems: ((global['hiddenNavItems'] as List?)?.cast<String>().toSet()) ?? const {},
+      taggerPath: (global['taggerPath'] as String?) ?? '',
     );
   }
 

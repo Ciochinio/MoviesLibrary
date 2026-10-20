@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../widgets/tag_manager_dialog.dart';
+import 'autotag_screen.dart' show showNeverTagsDialog;
 
 class CategoriesScreen extends StatelessWidget {
   const CategoriesScreen({super.key});
@@ -80,12 +81,15 @@ class _CategoryCard extends StatelessWidget {
       items: const [
         PopupMenuItem(value: 'tag_all', child: Row(children: [Icon(Icons.sell), SizedBox(width: 12), Text('Tag All Items...')])),
         PopupMenuItem(value: 'auto_tags', child: Row(children: [Icon(Icons.auto_fix_high), SizedBox(width: 12), Text('Auto-Tags Settings...')])),
+        PopupMenuItem(value: 'never_tags', child: Row(children: [Icon(Icons.block), SizedBox(width: 12), Text('Tags that never apply...')])),
       ],
     ).then((value) async {
       if (value == 'tag_all') {
         await _showBulkTagDialog(context, subcategoryId, subcategoryName);
       } else if (value == 'auto_tags') {
         await _showAutoTagDialog(context, subcategoryId, subcategoryName);
+      } else if (value == 'never_tags') {
+        if (context.mounted) await showNeverTagsDialog(context, '${category.name}/$subcategoryName');
       }
     });
   }
@@ -257,6 +261,11 @@ class _CategoryCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(child: Text(category.name, style: Theme.of(context).textTheme.titleLarge)),
+                IconButton(
+                  tooltip: 'Tags that never apply to this category (Lewdex)',
+                  icon: const Icon(Icons.block),
+                  onPressed: () => showNeverTagsDialog(context, category.name),
+                ),
                 IconButton(
                   tooltip: 'Rename',
                   icon: const Icon(Icons.edit),

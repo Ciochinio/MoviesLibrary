@@ -375,6 +375,30 @@ class ThumbnailService {
     }
   }
 
+  /// Get the width and height of the first video stream using ffprobe.
+  static Future<({int width, int height})?> probeVideoSize(String videoPath) async {
+    final probe = await _resolveFfprobe();
+    if (probe == null) return null;
+    try {
+      final result = await Process.run(probe, [
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height',
+        '-of', 'csv=s=x:p=0',
+        videoPath,
+      ]);
+      if (result.exitCode != 0) return null;
+      final parts = (result.stdout as String).trim().split('x');
+      if (parts.length < 2) return null;
+      final w = int.tryParse(parts[0]);
+      final h = int.tryParse(parts[1]);
+      if (w == null || h == null) return null;
+      return (width: w, height: h);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Extract a single frame at a given timestamp (seconds) to a destination file.
   Future<bool> extractFrame({
     required String videoPath,

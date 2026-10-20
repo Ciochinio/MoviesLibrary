@@ -11,6 +11,8 @@ import 'screens/categories_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/favourites_screen.dart';
 import 'screens/raffle_screen.dart';
+import 'screens/autotag_screen.dart';
+import '../core/autotag.dart';
 import 'widgets/import_overlay_panel.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +44,7 @@ const _allNavItems = [
   _NavItem(key: 'search',     icon: Icons.search,        label: 'Search',     page: SearchScreen()),
   _NavItem(key: 'notes',      icon: Icons.note_alt,      label: 'Notes',      page: NotesScreen()),
   _NavItem(key: 'tags',       icon: Icons.sell,          label: 'Tags',       page: TagsScreen()),
+  _NavItem(key: 'autotag',    icon: Icons.auto_awesome,  label: 'Lewdex',     page: AutotagScreen()),
   _NavItem(key: 'categories', icon: Icons.folder,        label: 'Categories', page: CategoriesScreen()),
   _NavItem(key: 'settings',   icon: Icons.settings,      label: 'Settings',   page: SettingsScreen(),   always: true),
 ];
@@ -64,6 +67,7 @@ class _AppShellState extends State<AppShell> {
     final app = context.read<AppState>();
     if (app.isReady && _importController == null) {
       _importController = ImportController(app);
+      AutotagService(app).refreshNeedsReview();   // review marker on startup
     }
   }
 
@@ -135,7 +139,7 @@ class _AppShellState extends State<AppShell> {
                   destinations: [
                     for (final item in visible)
                       NavigationRailDestination(
-                        icon: Icon(item.icon),
+                        icon: item.key == 'autotag' ? ReviewMarker(child: Icon(item.icon)) : Icon(item.icon),
                         label: Text(item.label),
                       ),
                   ],

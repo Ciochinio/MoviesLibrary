@@ -55,6 +55,8 @@ class AppState extends ChangeNotifier {
   String? stashSubcategoryId; // default "Unassigned"
 
   bool get isReady => _db != null && paths != null;
+  /// Raw DB handle for features that keep their own tables (auto-tagger).
+  Database? get database => _db;
 
   List<Category> get categoryList => _categoryList;
   List<Subcategory> subcategoriesFor(String categoryId) => _subByCat[categoryId] ?? [];

@@ -13,6 +13,7 @@ import '../../core/models.dart';
 import '../../core/library_folders.dart';
 import '../../core/thumbnail_service.dart';
 import '../../core/import_controller.dart';
+import '../../core/vr_format.dart';
 
 import '../widgets/tag_manager_dialog.dart';
 import '../widgets/media_grid_controls.dart';
@@ -50,6 +51,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   // Untagged indicator — set of item IDs with zero tags
   Set<String> _untaggedIds = {};
+  Map<String, VrFormat> _vrFormats = {};
 
   // Thumbnail version counters — incremented when thumbnail changes to bust Flutter's image cache
   final Map<String, int> _thumbVersions = {};
@@ -114,6 +116,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } else {
       _untaggedIds = {};
     }
+    _vrFormats = loaded.isEmpty ? {} : await app.items!.listVrFormats(loaded.map((e) => e.id).toList());
     setState(() => loading = false);
     // Restore scroll position after rebuild.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -716,6 +719,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         const PopupMenuItem(value: 'tags', child: Row(children: [Icon(Icons.sell, size: 20), SizedBox(width: 12), Text('Tagi...')])),
         if (showThumbOption)
           const PopupMenuItem(value: 'thumbnail', child: Row(children: [Icon(Icons.photo_camera, size: 20), SizedBox(width: 12), Text('Set Thumbnail...')])),
+        if (isVideo)
+          const PopupMenuItem(value: 'vr', child: Row(children: [Icon(Icons.vrpano, size: 20), SizedBox(width: 12), Text('VR format...')])),
         const PopupMenuItem(value: 'move', child: Row(children: [Icon(Icons.drive_file_move, size: 20), SizedBox(width: 12), Text('Move to...')])),
         const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Export...')])),
         const PopupMenuDivider(),
@@ -729,12 +734,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
         case 'rename':    await _showRenameDialog(item); break;
         case 'tags':      await _showTagsForItem(item); break;
         case 'thumbnail': await _showThumbnailPicker(item); break;
+        case 'vr':        await _showVrFormatDialog(item); break;
         case 'move':      await _moveItem(item); break;
         case 'export':    await _exportItem(item); break;
         case 'open_folder': await _openInFolder(item); break;
         case 'delete':    await _deleteItem(item); break;
       }
     });
+  }
+
+  Future<void> _showVrFormatDialog(MediaItem item) async {
+    final app = context.read<AppState>();
+    final current = _vrFormats[item.id];
+    // Wrapped so "Not VR" (null) is distinguishable from dismissing the dialog
+    final picked = await showDialog<({VrFormat? format})>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('VR format'),
+        children: [
+          for (final f in [null, ...VrFormat.values])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, (format: f)),
+              child: Row(children: [
+                Icon(f == current ? Icons.radio_button_checked : Icons.radio_button_unchecked, size: 20),
+                const SizedBox(width: 12),
+                Text(f?.label ?? 'Not VR'),
+              ]),
+            ),
+        ],
+      ),
+    );
+    if (picked == null || picked.format == current) return;
+    await setVrFormat(app, item.id, picked.format);
+    await _reload();
   }
 
   // ─── Edit subcategory description ──────────
@@ -842,6 +874,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               showTypeMarkers: app.settings.showTypeMarkers,
                               showUntaggedIndicator: app.settings.showUntaggedIndicator,
                               untaggedIds: _untaggedIds,
+                              vrFormats: _vrFormats,
                               thumbVersions: _thumbVersions,
                               onSelect: (item) {
                                 if (_selectMode) {
@@ -1251,6 +1284,7 @@ class _ItemsGrid extends StatelessWidget {
   final bool showTypeMarkers;
   final bool showUntaggedIndicator;
   final Set<String> untaggedIds;
+  final Map<String, VrFormat> vrFormats;
   final Map<String, int> thumbVersions;
   final void Function(MediaItem item) onSelect;
   final void Function(String id) onToggleBulk;
@@ -1270,6 +1304,7 @@ class _ItemsGrid extends StatelessWidget {
     this.showTypeMarkers = true,
     this.showUntaggedIndicator = true,
     this.untaggedIds = const {},
+    this.vrFormats = const {},
     this.thumbVersions = const {},
     required this.onSelect,
     required this.onToggleBulk,
@@ -1310,6 +1345,7 @@ class _ItemsGrid extends StatelessWidget {
           showFavourite: true,
           isFavourite: it.isFavourite,
           thumbVersion: thumbVersions[it.id] ?? 0,
+          vrFormat: vrFormats[it.id],
           onTap: () => onSelect(it),
           onLongPress: () => onLongPress(it),
           onContextMenu: (cardCtx, pos) => onContextMenu(cardCtx, it, pos),

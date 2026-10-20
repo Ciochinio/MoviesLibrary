@@ -11,12 +11,13 @@ class AppDb {
     _db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 14,
+        version: 15,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
         },
         onCreate: (db, version) async {
           await _createSchema(db);
+          await _upgradeToV15(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) await _upgradeToV2(db);
@@ -32,6 +33,7 @@ class AppDb {
           if (oldVersion < 12) await _upgradeToV12(db);
           if (oldVersion < 13) await _upgradeToV13(db);
           if (oldVersion < 14) await _upgradeToV14(db);
+          if (oldVersion < 15) await _upgradeToV15(db);
         },
       ),
     );
@@ -533,6 +535,34 @@ class AppDb {
         type TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (id, type)
+      );
+    ''');
+  }
+
+  /// Auto-tagger bookkeeping. Labels are 'tag:<name>', 'kv:<key>=<value>' or
+  /// 'folder:<category>/<subcategory>'.
+  ///  - autotag_applied: labels the model applied that nobody confirmed yet. The
+  ///    tagger ignores these when training so it never learns from its own guesses.
+  ///  - autotag_feedback: explicit review answers (verdict 1 = yes, 0 = no).
+  Future<void> _upgradeToV15(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS autotag_applied (
+        item_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (item_id, label),
+        FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
+      );
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS autotag_feedback (
+        item_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        verdict INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (item_id, label),
+        FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
       );
     ''');
   }

@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import 'models.dart';
 import 'app_settings.dart';
 import 'library_folders.dart';
+import 'vr_format.dart';
 
 const _uuid = Uuid();
 
@@ -708,6 +709,29 @@ class ItemRepo {
     final placeholders = List.filled(ids.length, '?').join(',');
     final rows = await db.rawQuery('SELECT * FROM items WHERE id IN ($placeholders)', ids);
     return rows.map((r) => _rowToItem(r.cast<String, Object?>())).toList();
+  }
+
+  Future<List<MediaItem>> listAllVideoItems() async {
+    final rows = await db.query('items', where: 'type=?', whereArgs: ['video']);
+    return rows.map(_rowToItem).toList();
+  }
+
+  /// VR format of each given item that has a `VR` custom tag.
+  Future<Map<String, VrFormat>> listVrFormats(List<String> itemIds) async {
+    if (itemIds.isEmpty) return {};
+    final placeholders = List.filled(itemIds.length, '?').join(',');
+    final rows = await db.rawQuery(
+      'SELECT itk.item_id, kv.value '
+      'FROM item_tag_key_values itk '
+      'JOIN tag_key_values kv ON kv.id = itk.key_value_id '
+      'JOIN tag_keys k ON k.id = kv.key_id '
+      'WHERE k.key = ? AND itk.item_id IN ($placeholders)',
+      [vrTagKey, ...itemIds],
+    );
+    return {
+      for (final r in rows)
+        if (VrFormat.fromLabel(r['value'] as String?) case final f?) r['item_id'] as String: f,
+    };
   }
 
   Future<List<MediaItem>> listItemsInSubcategory(String subcategoryId, {List<String> tagIds = const []}) async {

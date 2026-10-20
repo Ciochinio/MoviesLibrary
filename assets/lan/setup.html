@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phone setup</title>
+<style>
+  body { margin:0; background:#111; color:#eee; font:16px/1.45 -apple-system, system-ui, sans-serif; padding:calc(env(safe-area-inset-top) + 16px) 18px 32px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  p.lead { color:#aaa; margin:0 0 18px; }
+  ol { padding-left:22px; margin:0; }
+  li { margin:0 0 18px; }
+  .path { color:#c4b5fd; }
+  a.btn { display:inline-block; margin-top:8px; padding:10px 16px; border-radius:10px; background:#a78bfa; color:#111; font-weight:600; text-decoration:none; }
+  code { background:#222; padding:2px 6px; border-radius:6px; }
+  .note { color:#999; font-size:14px; }
+</style>
+</head>
+<body>
+  <h1>Secure mode setup</h1>
+  <p class="lead">One-time setup so the VR player can use head tracking (iOS only allows motion sensors on secure pages). Takes about a minute.</p>
+  <ol>
+    <li>
+      Download this PC's certificate:<br>
+      <a class="btn" href="/ca.cer">Download certificate</a><br>
+      <span class="note">Safari asks to download a configuration profile: tap <b>Allow</b>, then <b>Close</b>.</span>
+    </li>
+    <li>
+      Install it: <span class="path">Settings → General → VPN &amp; Device Management</span> → <b>PML Local CA</b> → <b>Install</b>.
+    </li>
+    <li>
+      Trust it: <span class="path">Settings → General → About → Certificate Trust Settings</span> → switch on <b>PML Local CA</b>.
+    </li>
+    <li>
+      Open the secure page:<br>
+      <a class="btn" id="secure" href="#">Open secure library</a><br>
+      <span class="note">Then <b>Share → Add to Home Screen</b> for fullscreen. Use that icon from now on (you can delete the old one).</span>
+    </li>
+  </ol>
+  <p class="note">The certificate only works for this PC's library. If the page says it's not secure, check step 3. If it doesn't load at all, port <code id="port"></code> must be allowed in the PC's firewall.</p>
+<script>
+  const port = Number(location.port || 80) + 1;
+  document.getElementById('secure').href = `https://${location.hostname}:${port}/`;
+  document.getElementById('port').textContent = port;
+</script>
+</body>
+</html>

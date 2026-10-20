@@ -2,14 +2,18 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path/path.dart' as p;
+import 'package:provider/provider.dart';
 
+import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../core/session_volume.dart';
+import '../../core/vr_format.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PmlPlayerController
@@ -29,6 +33,11 @@ class PmlPlayerController {
   bool _isGif = false;
 
   String? currentFilePath;
+
+  /// For VR videos: true shows one eye zoomed in (drag to look around),
+  /// false shows the raw side-by-side frame. Toggled by the player's VR button
+  /// and the V key in the full player.
+  final ValueNotifier<bool> vrView = ValueNotifier(true);
 
   PmlPlayerController() {
     _player = Player();
@@ -88,6 +97,7 @@ class PmlPlayerController {
 
   Future<void> dispose() async {
     aspectRatio.dispose();
+    vrView.dispose();
     await _player.dispose();
   }
 }
@@ -148,12 +158,37 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
 
   final List<StreamSubscription<dynamic>> _subs = [];
 
+  // ── VR view ───────────────────────────────────────────────────────────────
+  VrFormat? _vrFormat;
+  double _vrZoom = _vrDefaultZoom;
+  /// Offset of the eye's centre from the viewport centre, in logical pixels.
+  Offset _vrPan = Offset.zero;
+  static const _vrDefaultZoom = 1.6;
+
   bool get _isImageOrGif => widget.controller.isStaticImage || widget.controller.isGif;
 
   @override
   void initState() {
     super.initState();
     if (!_isImageOrGif) _subscribeToPlayer();
+    widget.controller.vrView.addListener(_onVrViewChanged);
+    _loadVrFormat();
+  }
+
+  void _onVrViewChanged() { if (mounted) setState(() {}); }
+
+  Future<void> _loadVrFormat() async {
+    final id = widget.item.id;
+    if (widget.item.type != ItemType.video) return;
+    final app = context.read<AppState>();
+    if (!app.isReady) return;
+    final formats = await app.items!.listVrFormats([id]);
+    if (!mounted || widget.item.id != id) return;
+    setState(() {
+      _vrFormat = formats[id];
+      _vrZoom = _vrDefaultZoom;
+      _vrPan = Offset.zero;
+    });
   }
 
   @override
@@ -170,6 +205,12 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
       });
       widget.controller.aspectRatio.value = null;
       if (!_isImageOrGif) _subscribeToPlayer();
+      _vrFormat = null;
+      _loadVrFormat();
+    }
+    if (old.controller != widget.controller) {
+      old.controller.vrView.removeListener(_onVrViewChanged);
+      widget.controller.vrView.addListener(_onVrViewChanged);
     }
     _volume = SessionVolume.instance.volume;
     _isMuted = SessionVolume.instance.muted;
@@ -200,6 +241,7 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
   @override
   void dispose() {
     for (final s in _subs) s.cancel();
+    widget.controller.vrView.removeListener(_onVrViewChanged);
     super.dispose();
   }
 
@@ -286,18 +328,20 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
     return Stack(
         children: [
           Positioned.fill(
-            child: GestureDetector(
-              onTap: togglePlay,
-              behavior: HitTestBehavior.opaque,
-              child: _withAspectRatio(
-                aspect: widget.compact ? null : _videoAspect,
-                child: Video(
-                  controller: widget.controller.videoController,
-                  controls: NoVideoControls,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
+            child: _vrActive
+                ? _buildVrView()
+                : GestureDetector(
+                    onTap: togglePlay,
+                    behavior: HitTestBehavior.opaque,
+                    child: _withAspectRatio(
+                      aspect: widget.compact ? null : _videoAspect,
+                      child: Video(
+                        controller: widget.controller.videoController,
+                        controls: NoVideoControls,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
           ),
           Positioned.fill(
             child: AnimatedOpacity(
@@ -308,6 +352,80 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
           ),
         ],
     );
+  }
+
+  bool get _vrActive => _vrFormat != null && widget.controller.vrView.value && _videoAspect != null;
+
+  /// Width/height of one eye as it should be displayed.
+  double get _eyeAspect {
+    final frame = _videoAspect!;
+    return switch (_vrFormat!) {
+      VrFormat.sbs180 => 1.0,
+      VrFormat.sbs360 || VrFormat.tb360 => 2.0,
+      // Full-width 3D SBS keeps each eye's own shape; half-width SBS is squeezed 16:9
+      VrFormat.flatSbs => frame >= 3 ? frame / 2 : 16 / 9,
+    };
+  }
+
+  /// One eye of a VR video, zoomed in. Drag to look around, scroll to zoom,
+  /// double-click to reset. A cropped view rather than a true reprojection
+  /// (the bundled libmpv has no v360 filter): the centre looks natural, the
+  /// edges keep some fisheye curve.
+  Widget _buildVrView() {
+    final topBottom = _vrFormat == VrFormat.tb360;
+    final eyeAspect = _eyeAspect;
+
+    return LayoutBuilder(builder: (ctx, c) {
+      final vw = c.maxWidth, vh = c.maxHeight;
+      // Eye fitted inside the viewport, then zoomed
+      final fitW = (vh * eyeAspect).clamp(0.0, vw);
+      final eyeW = fitW * _vrZoom;
+      final eyeH = eyeW / eyeAspect;
+      final maxX = ((eyeW - vw) / 2).clamp(0.0, double.infinity);
+      final maxY = ((eyeH - vh) / 2).clamp(0.0, double.infinity);
+      final pan = Offset(_vrPan.dx.clamp(-maxX, maxX), _vrPan.dy.clamp(-maxY, maxY));
+
+      return Listener(
+        onPointerSignal: (e) {
+          if (e is PointerScrollEvent) {
+            setState(() => _vrZoom = (_vrZoom * (e.scrollDelta.dy > 0 ? 0.9 : 1.1)).clamp(1.0, 5.0));
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: togglePlay,
+          onDoubleTap: () => setState(() { _vrZoom = _vrDefaultZoom; _vrPan = Offset.zero; }),
+          onPanUpdate: (d) => setState(() => _vrPan = pan + d.delta),
+          child: ClipRect(
+            child: Stack(children: [
+              // Clipped to the eye itself so the other eye never shows,
+              // even when the eye is smaller than the viewport
+              Positioned(
+                left: vw / 2 - eyeW / 2 + pan.dx,
+                top: vh / 2 - eyeH / 2 + pan.dy,
+                width: eyeW,
+                height: eyeH,
+                child: ClipRect(
+                  // The left (or top) eye sits at the frame's top-left corner
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    minWidth: topBottom ? eyeW : eyeW * 2,
+                    maxWidth: topBottom ? eyeW : eyeW * 2,
+                    minHeight: topBottom ? eyeH * 2 : eyeH,
+                    maxHeight: topBottom ? eyeH * 2 : eyeH,
+                    child: Video(
+                      controller: widget.controller.videoController,
+                      controls: NoVideoControls,
+                      fit: BoxFit.fill,
+                    ),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+    });
   }
 
   Widget _buildControlsOverlay(ColorScheme cs, double progress) {
@@ -386,6 +504,20 @@ class _MediaPlayerWidgetState extends State<MediaPlayerWidget> {
           _VolumeSlider(value: _isMuted ? 0.0 : _volume, onChanged: setVolume),
         ],
         SizedBox(width: widget.compact ? 2 : 8),
+
+        if (_vrFormat != null) ...[
+          _ControlButton(
+            icon: Icons.vrpano,
+            onTap: () => widget.controller.vrView.value = !widget.controller.vrView.value,
+            size: iconSize,
+            tooltip: widget.controller.vrView.value
+                ? 'VR view: drag to look, scroll to zoom, double-click to reset (V)'
+                : 'Show VR view (V)',
+            active: widget.controller.vrView.value,
+            activeColor: cs.primary,
+          ),
+          SizedBox(width: widget.compact ? 2 : 4),
+        ],
 
         if (widget.onLoopToggle != null)
           _ControlButton(

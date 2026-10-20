@@ -9,6 +9,8 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/app_settings.dart';
 import '../../core/thumbnail_service.dart';
+import '../../core/vr_format.dart';
+import '../widgets/lan_settings_card.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,6 +22,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _ffmpegAvailable;
   String? _ffmpegPath;
+  String? _vrScanStatus;
+  bool _vrScanning = false;
 
   @override
   void initState() {
@@ -31,6 +35,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final available = await ThumbnailService.isFfmpegAvailable();
     final path = await ThumbnailService.resolvedFfmpegPath();
     if (mounted) setState(() { _ffmpegAvailable = available; _ffmpegPath = path; });
+  }
+
+  Future<void> _scanForVr() async {
+    final app = context.read<AppState>();
+    setState(() { _vrScanning = true; _vrScanStatus = 'Scanning...'; });
+    final tagged = await scanLibraryForVr(app, onProgress: (done, total) {
+      if (mounted) setState(() => _vrScanStatus = 'Scanning... $done / $total');
+    });
+    await app.refreshAll();
+    if (mounted) {
+      setState(() {
+        _vrScanning = false;
+        _vrScanStatus = tagged == 0 ? 'No new VR videos found.' : 'Tagged $tagged video${tagged == 1 ? '' : 's'} as VR.';
+      });
+    }
   }
 
   Future<void> _downloadFfmpeg() async {
@@ -270,6 +289,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+
+          // ─── VR ───
+          Card(
+            child: ListTile(
+              title: const Text('VR videos'),
+              subtitle: Text(_vrScanStatus ??
+                  'New imports are checked automatically. Scan to tag videos already in the library '
+                  '(uses the file name and video size; needs ffmpeg).'),
+              trailing: FilledButton.icon(
+                onPressed: _vrScanning ? null : _scanForVr,
+                icon: const Icon(Icons.vrpano),
+                label: const Text('Scan library'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ─── Phone access ───
+          const LanSettingsCard(),
           const SizedBox(height: 12),
 
           // ─── Library path ───

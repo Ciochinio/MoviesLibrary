@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import 'app_state.dart';
+import 'vr_format.dart';
 
 enum ImportFileStatus { pending, importing, done, skipped, failed }
 
@@ -221,6 +222,13 @@ class ImportController extends ChangeNotifier {
         } else {
           entry.status = ImportFileStatus.done;
           _imported++;
+          if (pre.inserted != null) {
+            try {
+              await autoTagVr(appState, pre.inserted!);
+            } catch (_) {
+              // VR detection is a nicety; never fail the import over it
+            }
+          }
         }
 
         _totalBytes += fileSize;

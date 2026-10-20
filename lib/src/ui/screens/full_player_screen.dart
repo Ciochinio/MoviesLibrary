@@ -238,6 +238,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           if (_loopEnabled) _autoplayNext = false;
         });
         break;
+      case LogicalKeyboardKey.keyV:
+        if (isDown) _playerController.vrView.value = !_playerController.vrView.value;
+        break;
       case LogicalKeyboardKey.keyN:
         if (isDown) setState(() {
           _autoplayNext = !_autoplayNext;
