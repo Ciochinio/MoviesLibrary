@@ -23,7 +23,7 @@
   header { position:sticky; top:0; z-index:5; background:rgba(17,17,17,.94); backdrop-filter:blur(10px);
            padding:calc(env(safe-area-inset-top) + 8px) 10px 8px; display:flex; flex-wrap:wrap; gap:8px; }
   header select, header input { flex:1 1 140px; min-width:0; padding:9px 10px; border-radius:10px; border:1px solid #333; background:var(--card); }
-  #tagsBtn { flex:0 0 auto; padding:9px 12px; border-radius:10px; border:1px solid #333; background:var(--card); }
+  #tagsBtn, #calibBtn { flex:0 0 auto; padding:9px 12px; border-radius:10px; border:1px solid #333; background:var(--card); }
   #tagsBtn.active { border-color:var(--accent); color:var(--accent); }
   #count { width:100%; color:var(--dim); font-size:12px; }
   #secureBanner { width:100%; color:var(--accent); font-size:13px; text-decoration:none; }
@@ -67,6 +67,7 @@
     <select id="source"></select>
     <input id="q" type="search" placeholder="Search file name">
     <button id="tagsBtn">Tags</button>
+    <button id="calibBtn" title="Calibrate headset">🎯</button>
     <div id="count"></div>
     <a id="secureBanner" class="hidden" href="#">🥽 For head tracking in VR, set up secure mode →</a>
   </header>
@@ -250,7 +251,15 @@ function openVr(i) {
   if (!it || it.type !== 'video') return;
   current = i;
   closePlayer();
-  const f = VR_FORMATS[it.vr] || { proj: 'cinema', layout: 'mono' };
+  const f = Object.assign({}, VR_FORMATS[it.vr] || { proj: 'cinema', layout: 'mono' });
+  // Fisheye VR180 (newer cameras) is stored differently from regular VR180
+  if (f.proj === 180) {
+    const n = it.name.toLowerCase();
+    const m = n.match(/fisheye[\s_-]?(180|190|200)/);
+    if (m) f.proj = 'f' + m[1];
+    else if (/mkx[\s_-]?200/.test(n)) f.proj = 'f200';
+    else if (/fisheye|rf52|mkx/.test(n)) f.proj = 'f190';
+  }
   VRPlayer.open({
     url: withToken('/media/' + it.id),
     title: it.name,
@@ -297,6 +306,7 @@ $('tagsClear').onclick = () => { selTags.clear(); selKv.clear(); buildTagLists()
 $('tagSheet').addEventListener('click', e => { if (e.target.id === 'tagSheet') { $('tagSheet').classList.add('hidden'); load(); } });
 $('pClose').onclick = closePlayer;
 $('pVr').onclick = () => openVr(current);
+$('calibBtn').onclick = () => VRPlayer.open({ calibrate: true, title: 'Calibration', proj: 'cinema', layout: 'mono' });
 $('pPrev').onclick = () => open(current - 1);
 $('pNext').onclick = () => open(current + 1);
 

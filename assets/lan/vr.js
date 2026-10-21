@@ -21,15 +21,23 @@ uniform mat3 rot;        // world-from-camera
 uniform mat3 screenInv;  // screen-from-world (cinema)
 uniform vec2 tanHalf;    // tan(fov / 2) horizontally, vertically
 uniform float shiftX;    // off-axis shift (eye spacing), in NDC
-uniform int proj;        // 0 = 360, 1 = 180, 2 = cinema
+uniform int proj;        // 0 = 360, 1 = 180, 2 = cinema, 3 = fisheye
 uniform vec4 eye;        // this eye's rect in the texture: x, y, w, h (y down)
 uniform vec3 screen;     // cinema: half width, half height, distance
+uniform float fishHalf;  // fisheye: half the lens angle, radians
+uniform vec2 lensK;      // lens correction coefficients k1, k2 (0 = off)
+uniform float aspect;    // viewport width / height, keeps the correction circular
 const float PI = 3.14159265;
 
 vec4 sampleEye(vec2 uv) { return texture2D(tex, eye.xy + clamp(uv, 0.0, 1.0) * eye.zw); }
 
 void main() {
-  vec3 d = rot * normalize(vec3((ndc.x - shiftX) * tanHalf.x, ndc.y * tanHalf.y, -1.0));
+  // Headset lenses stretch the edges (pincushion); pre-squeeze them (barrel) so lines stay straight
+  vec2 n = vec2(ndc.x - shiftX, ndc.y);
+  vec2 pr = vec2(n.x * aspect, n.y);
+  float r2 = dot(pr, pr) / (aspect * aspect + 1.0);
+  n *= 1.0 + lensK.x * r2 + lensK.y * r2 * r2;
+  vec3 d = rot * normalize(vec3(n.x * tanHalf.x, n.y * tanHalf.y, -1.0));
   if (proj == 2) {
     vec3 s = screenInv * d;
     if (s.z < -0.001) {
@@ -41,6 +49,16 @@ void main() {
     }
     // Dark room with a faint floor
     gl_FragColor = vec4(vec3(0.02 + 0.04 * max(0.0, -d.y)), 1.0);
+    return;
+  }
+  if (proj == 3) {
+    // Equidistant fisheye: distance from the image centre grows with the angle off forward
+    float theta = acos(clamp(-d.z, -1.0, 1.0));
+    if (theta > fishHalf) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+    float len = length(d.xy);
+    vec2 dir = len > 1e-5 ? d.xy / len : vec2(0.0);
+    float r = 0.5 * theta / fishHalf;
+    gl_FragColor = sampleEye(vec2(0.5 + r * dir.x, 0.5 - r * dir.y));
     return;
   }
   float lon = atan(d.x, -d.z);
@@ -118,8 +136,11 @@ void main() {
 `;
 
   const LAYOUTS = { mono: 'Mono', sbs: 'Side-by-side', tb: 'Top-bottom' };
-  const PROJS = { 180: 'VR 180°', 360: 'VR 360°', cinema: 'Cinema' };
-  const prefs = Object.assign({ fov: 95, singleFov: 80, shift: 0, screenSize: 80, follow: false, headset: true },
+  const PROJS = { 180: 'VR 180°', 360: 'VR 360°', f180: 'Fisheye 180°', f190: 'Fisheye 190°', f200: 'Fisheye 200°', cinema: 'Cinema' };
+  // 180 / 360 are numbers; cinema and fisheye ('f190') are strings
+  const parseProj = v => (v === 'cinema' || String(v).startsWith('f')) ? String(v) : Number(v);
+  const CALIB_SIZE = 100; // calibration screen width, degrees
+  const prefs = Object.assign({ fov: 95, singleFov: 80, shift: 0, lens: 0, screenSize: 80, follow: false, headset: true },
     JSON.parse(localStorage.getItem('pml_vr_prefs') || '{}'));
   const savePrefs = () => localStorage.setItem('pml_vr_prefs', JSON.stringify(prefs));
 
@@ -155,8 +176,10 @@ void main() {
           <label>Layout <select data-k="layout"></select></label>
           <label>Field of view <input type="range" min="60" max="120" data-k="fov"></label>
           <label>Eye spacing <input type="range" min="-30" max="30" data-k="shift"></label>
+          <label>Lens correction <input type="range" min="0" max="100" data-k="lens"></label>
           <label>Screen size (cinema) <input type="range" min="30" max="130" data-k="screenSize"></label>
           <label class="chk"><input type="checkbox" data-k="follow"> Screen follows head (cinema)</label>
+          <button data-a="calib">🎯 Calibrate headset</button>
           <div class="hint" data-k="tracking"></div>
         </div>
       </div>`;
@@ -187,8 +210,11 @@ void main() {
     bindUI();
     layout();
     startTracking();
-    video.src = opts.url;
-    video.play().catch(() => {});
+    if (opts.calibrate) setCalib(true);
+    if (opts.url) {
+      video.src = opts.url;
+      if (!opts.calibrate) video.play().catch(() => {});
+    }
     showOverlay();
     P.raf = requestAnimationFrame(frame);
   }
@@ -236,7 +262,7 @@ void main() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0]));
     const u = {};
-    for (const n of ['tex', 'rot', 'screenInv', 'tanHalf', 'shiftX', 'proj', 'eye', 'screen']) u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['tex', 'rot', 'screenInv', 'tanHalf', 'shiftX', 'proj', 'eye', 'screen', 'fishHalf', 'lensK', 'aspect']) u[n] = gl.getUniformLocation(prog, n);
     gl.uniform1i(u.tex, 0);
     Object.assign(P, { gl, u });
   }
@@ -245,21 +271,30 @@ void main() {
     P.raf = requestAnimationFrame(frame);
     const { gl, u, video, canvas } = P;
     if (!gl) return;
-    if (video.readyState >= 2) {
+    if (P.calib) {
+      if (!P.calibUploaded) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, P.calibCanvas ||= calibPattern());
+        P.calibUploaded = true;
+      }
+    } else if (video.readyState >= 2) {
       try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video); } catch (_) {}
     }
     updateTime();
 
     const q = cameraQuat();
     gl.uniformMatrix3fv(u.rot, false, qMat3(q));
-    const proj = P.proj === 360 ? 0 : P.proj === 180 ? 1 : 2;
+    const pj = P.proj;
+    const proj = pj === 360 ? 0 : pj === 180 ? 1 : pj === 'cinema' ? 2 : 3;
     gl.uniform1i(u.proj, proj);
+    if (proj === 3) gl.uniform1f(u.fishHalf, Number(String(pj).slice(1)) * DEG / 2);
 
     if (proj === 2) {
       // Screen fixed ahead (after recenter), or glued to the view
-      gl.uniformMatrix3fv(u.screenInv, false, qMat3(prefs.follow ? qInv(q) : [0, 0, 0, 1]));
+      // The calibration grid stays fixed in the room so turning your head tests the FOV
+      const follow = prefs.follow && !P.calib;
+      gl.uniformMatrix3fv(u.screenInv, false, qMat3(follow ? qInv(q) : [0, 0, 0, 1]));
       const dist = 2;
-      const halfW = dist * Math.tan(prefs.screenSize * DEG / 2);
+      const halfW = dist * Math.tan((P.calib ? CALIB_SIZE : prefs.screenSize) * DEG / 2);
       gl.uniform3f(u.screen, halfW, halfW / screenAspect(), dist);
     }
 
@@ -269,6 +304,9 @@ void main() {
       const vw = Math.floor(W / 2), aspect = vw / H;
       const tx = Math.tan(prefs.fov * DEG / 2);
       gl.uniform2f(u.tanHalf, tx, tx / aspect);
+      const k1 = prefs.lens / 100 * 0.6;
+      gl.uniform2f(u.lensK, k1, k1 * 0.5);
+      gl.uniform1f(u.aspect, aspect);
       for (let i = 0; i < 2; i++) {
         gl.viewport(i * vw, 0, vw, H);
         // Positive spacing pushes each eye's centre outwards
@@ -278,6 +316,8 @@ void main() {
       }
     } else {
       gl.viewport(0, 0, W, H);
+      gl.uniform2f(u.lensK, 0, 0);
+      gl.uniform1f(u.aspect, W / H);
       const ty = Math.tan(prefs.singleFov * DEG / 2);
       gl.uniform2f(u.tanHalf, ty * W / H, ty);
       gl.uniform1f(u.shiftX, 0);
@@ -294,6 +334,7 @@ void main() {
 
   /// Width/height of one eye's picture, for the cinema screen.
   function screenAspect() {
+    if (P.calib) return 16 / 9;
     const v = P.video, a = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
     if (P.layout === 'sbs') return a >= 3 ? a / 2 : 16 / 9;   // full-width vs half-width 3D
     if (P.layout === 'tb') return a <= 1 ? a * 2 : 16 / 9;
@@ -382,6 +423,62 @@ void main() {
     P.root.querySelector('[data-a=rotate]').classList.toggle('on', P.rotate !== 0);
   }
 
+  /// Calibration: a fixed grid with a centre cross and fine text instead of the
+  /// video, shown as a cinema screen so focus, lens distance and FOV can be judged.
+  function setCalib(on) {
+    const r = P.root;
+    if (on) {
+      P.saved = { proj: P.proj, layout: P.layout };
+      P.video.pause();
+      P.proj = 'cinema'; P.layout = 'mono';
+      P.calibUploaded = false;
+      recenter();
+    } else if (P.saved) {
+      Object.assign(P, P.saved);
+      P.calibUploaded = false;
+    }
+    P.calib = on;
+    r.querySelector('.row.bottom').style.visibility = on ? 'hidden' : '';
+    r.querySelector('[data-a=calib]').textContent = on ? '✓ Done calibrating' : '🎯 Calibrate headset';
+    r.querySelector('.t').textContent = on ? 'Calibration' : (P.opts.title || '');
+    r.querySelector('[data-k=proj]').value = String(P.proj);
+    r.querySelector('[data-k=layout]').value = P.layout;
+  }
+
+  /// Sized so it shows at roughly 1:1 on a phone in the headset (a bigger texture
+  /// gets scaled down and thin lines shimmer).
+  function calibPattern() {
+    const W = 1600, H = 900, cx = W / 2, cy = H / 2, step = 80;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = '#141414'; g.fillRect(0, 0, W, H);
+    // Grid aligned to the centre: bold and bright enough to judge sharpness
+    g.strokeStyle = '#9a9a9a'; g.lineWidth = 3;
+    for (let x = cx % step; x <= W; x += step) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    for (let y = cy % step; y <= H; y += step) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    // Centre cross and rings
+    g.strokeStyle = '#a78bfa'; g.lineWidth = 5;
+    g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, H); g.moveTo(0, cy); g.lineTo(W, cy); g.stroke();
+    g.lineWidth = 4;
+    for (const rad of [60, 160, 280]) { g.beginPath(); g.arc(cx, cy, rad, 0, Math.PI * 2); g.stroke(); }
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const line = (text, size, y, color = '#fff') => {
+      g.font = `600 ${size}px -apple-system, system-ui, sans-serif`;
+      const w = g.measureText(text).width;
+      g.fillStyle = 'rgba(0,0,0,.8)'; g.fillRect(cx - w / 2 - 10, y - size * 0.7, w + 20, size * 1.4);
+      g.fillStyle = color; g.fillText(text, cx, y);
+    };
+    line('HEADSET CALIBRATION', 42, 90, '#c4b5fd');
+    line('1. Focus: close one eye, turn that eye\'s knob until this text is sharp. Then the other eye.', 22, 150);
+    line('2. Lens distance: both eyes open, turn the top wheel until you see ONE sharp purple cross.', 22, 188);
+    line('3. Lines at the sides bend or swim? Raise Lens correction (⚙) until they stay straight.', 22, 682);
+    line('4. Turn your head slowly: the grid must stay still. If it slides, change Field of view (⚙).', 22, 720);
+    line('5. Still doubled or straining? Adjust Eye spacing (⚙). Tap ◎ to re-centre.', 22, 758);
+    line('The quick brown fox jumps over the lazy dog 0123456789', 20, 812, '#ddd');
+    line('The quick brown fox jumps over the lazy dog 0123456789', 15, 846, '#bbb');
+    return c;
+  }
+
   /// The screen's safe-area insets in CSS pixels (env() is CSS-only, so measure it).
   function safeInsets() {
     const probe = document.createElement('div');
@@ -407,6 +504,7 @@ void main() {
       eyes: () => { prefs.headset = !prefs.headset; savePrefs(); layout(); },
       rotate: () => { P.rotate = P.rotate === 0 ? 90 : P.rotate === 90 ? -90 : 0; layout(); recenter(); },
       settings: () => { panel.style.display = panel.style.display === 'none' ? 'flex' : 'none'; },
+      calib: () => { setCalib(!P.calib); panel.style.display = 'none'; },
     };
     root.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation(); act[b.dataset.a](); showOverlay();
@@ -428,9 +526,9 @@ void main() {
     const fill = (sel, obj, val) => { sel.innerHTML = Object.entries(obj).map(([k, v]) => `<option value="${k}">${v}</option>`).join(''); sel.value = String(val); };
     fill($('[data-k=proj]'), PROJS, P.proj);
     fill($('[data-k=layout]'), LAYOUTS, P.layout);
-    $('[data-k=proj]').onchange = e => { const v = e.target.value; P.proj = v === 'cinema' ? 'cinema' : Number(v); recenter(); };
+    $('[data-k=proj]').onchange = e => { P.proj = parseProj(e.target.value); recenter(); };
     $('[data-k=layout]').onchange = e => { P.layout = e.target.value; };
-    for (const k of ['fov', 'shift', 'screenSize']) {
+    for (const k of ['fov', 'shift', 'lens', 'screenSize']) {
       const inp = $(`[data-k=${k}]`); inp.value = prefs[k];
       inp.oninput = () => { prefs[k] = Number(inp.value); savePrefs(); };
     }
